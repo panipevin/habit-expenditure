@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { evaluateHabitStreak, getRankTitle } from '../utils/streaks';
-import { buildAutomatedBudgetReport } from '../utils/finance';
+import { buildAutomatedBudgetReport, formatINR } from '../utils/finance';
 import { evaluateEveningCutoff } from '../utils/tasks';
 import { formatHourLabel, formatShortDate } from '../utils/dates';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -148,10 +148,10 @@ export const DashboardView: React.FC = () => {
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
           <p className="text-xs font-medium text-[#556075] dark:text-[#8B97AD]">Monthly Spend</p>
           <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            ${budgetReport.totalSpent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatINR(budgetReport.totalSpent)}
           </p>
           <p className="mt-1 text-xs text-[#556075] dark:text-[#94A3B8]">
-            <span className="font-mono tabular-nums">{budgetReport.utilizationPct}%</span> of ${budgetReport.totalBudget.toLocaleString('en-US')} plan
+            <span className="font-mono tabular-nums">{budgetReport.utilizationPct}%</span> of {formatINR(budgetReport.totalBudget, false)} plan
           </p>
         </div>
 
@@ -161,7 +161,7 @@ export const DashboardView: React.FC = () => {
             {boards.reduce((s, b) => s + b.items.filter((i) => i.status !== 'done').length, 0)}
           </p>
           <p className="mt-1 text-xs text-[#556075] dark:text-[#94A3B8]">
-            Active cards across {boards.length} shared boards
+            Active cards across {boards.length} {boards.length === 1 ? 'board' : 'boards'}
           </p>
         </div>
       </section>
@@ -284,34 +284,45 @@ export const DashboardView: React.FC = () => {
                   </div>
 
                   <div className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737] flex-1">
-                    {pendingTasks.slice(0, 4).map((task) => (
-                      <div key={task.id} className="py-3 flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => toggleTaskStatus(task.id)}
-                            aria-label={`Mark "${task.title}" complete`}
-                            className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
-                          >
-                            {task.status === 'done' ? (
-                              <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
-                            ) : (
-                              <Circle className="w-4 h-4" />
-                            )}
-                          </button>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                              {task.title}
-                            </p>
-                            <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
-                              {task.category} · {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)} priority
-                              {task.dueTime ? ` · Due ${task.dueTime}` : ''}
-                              {task.assignedBeforeNight ? ' · Planned pre-cutoff' : ''}
-                            </p>
+                    {pendingTasks.length === 0 ? (
+                      <div className="py-8 text-center">
+                        <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9]">
+                          No pending tasks yet
+                        </p>
+                        <p className="mt-1 text-xs text-[#556075] dark:text-[#8B97AD]">
+                          Add your first daily task before {formatHourLabel(notificationPrefs.eveningCutoffHour)} for automated reminders.
+                        </p>
+                      </div>
+                    ) : (
+                      pendingTasks.slice(0, 4).map((task) => (
+                        <div key={task.id} className="py-3 flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => toggleTaskStatus(task.id)}
+                              aria-label={`Mark "${task.title}" complete`}
+                              className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
+                            >
+                              {task.status === 'done' ? (
+                                <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
+                              ) : (
+                                <Circle className="w-4 h-4" />
+                              )}
+                            </button>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                                {task.title}
+                              </p>
+                              <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
+                                {task.category} · {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)} priority
+                                {task.dueTime ? ` · Due ${task.dueTime}` : ''}
+                                {task.assignedBeforeNight ? ' · Planned pre-cutoff' : ''}
+                              </p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </section>
               );
@@ -337,61 +348,72 @@ export const DashboardView: React.FC = () => {
                   </div>
 
                   <div className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737] flex-1">
-                    {habitSummaries.slice(0, 4).map(({ habit, summary }) => (
-                      <div key={habit.id} className="py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                            {habit.name}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
-                            {summary.status === 'paused'
-                              ? 'Paused (protected)'
-                              : summary.status === 'at_risk'
-                              ? 'Check in today to keep streak'
-                              : summary.nextMilestone
-                              ? `${summary.nextMilestone.days - summary.currentStreak}d to ${summary.nextMilestone.title}`
-                              : 'Centurion Flame achieved'}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold tabular-nums text-[#EA580C] dark:text-[#F59E0B]">
-                            <Flame className="w-3.5 h-3.5 fill-current" />
-                            {summary.currentStreak}
-                          </span>
-                          {summary.unclaimedMilestones.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                claimMilestoneReward(habit.id, summary.unclaimedMilestones[0].days)
-                              }
-                              className="inline-flex items-center gap-1 rounded-md bg-[#D97706] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#B45309] transition-colors whitespace-nowrap"
-                            >
-                              <Trophy className="w-3 h-3" />
-                              Claim
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={habit.isPaused}
-                              onClick={() => toggleHabitToday(habit.id)}
-                              aria-label={
-                                summary.completedToday
-                                  ? `Undo check-in for ${habit.name}`
-                                  : `Complete ${habit.name} today`
-                              }
-                              className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors disabled:opacity-40 ${
-                                summary.completedToday
-                                  ? 'bg-[#16A34A] border-[#16A34A] text-white'
-                                  : 'border-[#E2E6ED] dark:border-[#1F2737] text-[#556075] hover:border-[#1D4ED8]'
-                              }`}
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
+                    {habitSummaries.length === 0 ? (
+                      <div className="py-8 text-center">
+                        <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9]">
+                          No habits tracked yet
+                        </p>
+                        <p className="mt-1 text-xs text-[#556075] dark:text-[#8B97AD]">
+                          Create a habit to start building streaks and unlocking milestone XP.
+                        </p>
                       </div>
-                    ))}
+                    ) : (
+                      habitSummaries.slice(0, 4).map(({ habit, summary }) => (
+                        <div key={habit.id} className="py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                              {habit.name}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
+                              {summary.status === 'paused'
+                                ? 'Paused (protected)'
+                                : summary.status === 'at_risk'
+                                ? 'Check in today to keep streak'
+                                : summary.nextMilestone
+                                ? `${summary.nextMilestone.days - summary.currentStreak}d to ${summary.nextMilestone.title}`
+                                : 'Centurion Flame achieved'}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold tabular-nums text-[#EA580C] dark:text-[#F59E0B]">
+                              <Flame className="w-3.5 h-3.5 fill-current" />
+                              {summary.currentStreak}
+                            </span>
+                            {summary.unclaimedMilestones.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  claimMilestoneReward(habit.id, summary.unclaimedMilestones[0].days)
+                                }
+                                className="inline-flex items-center gap-1 rounded-md bg-[#D97706] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#B45309] transition-colors whitespace-nowrap"
+                              >
+                                <Trophy className="w-3 h-3" />
+                                Claim
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={habit.isPaused}
+                                onClick={() => toggleHabitToday(habit.id)}
+                                aria-label={
+                                  summary.completedToday
+                                    ? `Undo check-in for ${habit.name}`
+                                    : `Complete ${habit.name} today`
+                                }
+                                className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors disabled:opacity-40 ${
+                                  summary.completedToday
+                                    ? 'bg-[#16A34A] border-[#16A34A] text-white'
+                                    : 'border-[#E2E6ED] dark:border-[#1F2737] text-[#556075] hover:border-[#1D4ED8]'
+                                }`}
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </section>
               );
@@ -416,20 +438,31 @@ export const DashboardView: React.FC = () => {
                     </button>
                   </div>
                   <div className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737] flex-1">
-                    {upcomingEvents.map((ev) => (
-                      <div key={ev.id} className="py-3 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                            {ev.title}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
-                            {formatShortDate(ev.date)} · {ev.startTime} · {ev.eventType === 'meeting' ? 'Team meeting' : ev.eventType === 'deadline' ? 'Deadline' : 'Reminder'}
-                            {ev.urgent ? ' · Urgent' : ''}
-                          </p>
-                        </div>
-                        <CalendarDays className="w-4 h-4 text-[#556075] dark:text-[#8B97AD] shrink-0 mt-0.5" />
+                    {upcomingEvents.length === 0 ? (
+                      <div className="py-8 text-center">
+                        <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9]">
+                          No upcoming events
+                        </p>
+                        <p className="mt-1 text-xs text-[#556075] dark:text-[#8B97AD]">
+                          Schedule team meetings or deadlines in the Calendar.
+                        </p>
                       </div>
-                    ))}
+                    ) : (
+                      upcomingEvents.map((ev) => (
+                        <div key={ev.id} className="py-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                              {ev.title}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
+                              {formatShortDate(ev.date)} · {ev.startTime} · {ev.eventType === 'meeting' ? 'Team meeting' : ev.eventType === 'deadline' ? 'Deadline' : 'Reminder'}
+                              {ev.urgent ? ' · Urgent' : ''}
+                            </p>
+                          </div>
+                          <CalendarDays className="w-4 h-4 text-[#556075] dark:text-[#8B97AD] shrink-0 mt-0.5" />
+                        </div>
+                      ))
+                    )}
                   </div>
                 </section>
               );
@@ -448,7 +481,9 @@ export const DashboardView: React.FC = () => {
                         Shared Team Boards Pulse
                       </h2>
                       <p className="mt-0.5 text-xs text-[#556075] dark:text-[#94A3B8]">
-                        {activeBoard?.name} · {activeBoard?.members.length || 0} collaborators
+                        {activeBoard
+                          ? `${activeBoard.name} · ${activeBoard.members.length} ${activeBoard.members.length === 1 ? 'member' : 'members'}`
+                          : 'No shared boards created yet'}
                       </p>
                     </div>
                     <button
@@ -460,26 +495,41 @@ export const DashboardView: React.FC = () => {
                     </button>
                   </div>
                   <div className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737]">
-                    {activeBoard?.items.slice(0, 3).map((item) => (
-                      <div key={item.id} className="py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                            {item.title}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
-                            {item.assigneeName} · {item.status.replace('_', ' ')} · Due {formatShortDate(item.dueDate)}
-                          </p>
-                        </div>
-                        {item.assigneeAvatar && (
-                          <img
-                            src={item.assigneeAvatar}
-                            alt={item.assigneeName}
-                            referrerPolicy="no-referrer"
-                            className="w-7 h-7 rounded-full object-cover shrink-0 border border-[#E2E6ED] dark:border-[#1F2737]"
-                          />
-                        )}
+                    {!activeBoard || activeBoard.items.length === 0 ? (
+                      <div className="py-8 text-center">
+                        <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9]">
+                          {activeBoard ? 'No cards on this board yet' : 'Start your first shared board'}
+                        </p>
+                        <p className="mt-1 text-xs text-[#556075] dark:text-[#8B97AD]">
+                          Create a project board to track status updates and collaborate in real time.
+                        </p>
                       </div>
-                    ))}
+                    ) : (
+                      activeBoard.items.slice(0, 3).map((item) => (
+                        <div key={item.id} className="py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                              {item.title}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
+                              {item.assigneeName} · {item.status.replace('_', ' ')} · Due {formatShortDate(item.dueDate)}
+                            </p>
+                          </div>
+                          {item.assigneeAvatar ? (
+                            <img
+                              src={item.assigneeAvatar}
+                              alt={item.assigneeName}
+                              referrerPolicy="no-referrer"
+                              className="w-7 h-7 rounded-full object-cover shrink-0 border border-[#E2E6ED] dark:border-[#1F2737]"
+                            />
+                          ) : (
+                            <span className="w-7 h-7 rounded-full bg-[#1D4ED8]/15 text-[#1D4ED8] dark:text-[#93C5FD] flex items-center justify-center text-[11px] font-semibold shrink-0">
+                              {item.assigneeName.slice(0, 2).toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </section>
               );
@@ -506,7 +556,7 @@ export const DashboardView: React.FC = () => {
                   <div className="mt-4 space-y-3">
                     <div className="flex items-baseline justify-between">
                       <span className="font-mono text-xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-                        ${budgetReport.remainingBudget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        {formatINR(budgetReport.remainingBudget)}
                       </span>
                       <span className="text-xs text-[#556075] dark:text-[#8B97AD]">remaining</span>
                     </div>

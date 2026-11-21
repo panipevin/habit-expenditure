@@ -3,6 +3,7 @@ import {
   Bell,
   Cloud,
   CloudOff,
+  Copy,
   Fingerprint,
   Lock,
   LogIn,
@@ -11,6 +12,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sun,
+  Trash2,
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
@@ -49,11 +51,14 @@ export const SettingsView: React.FC = () => {
     notificationPrefs,
     updateNotificationPrefs,
     pushAlert,
+    clearWorkspaceData,
   } = useWorkspace();
 
   const [bioCap, setBioCap] = useState<BiometricCapability | null>(null);
   const [bioMessage, setBioMessage] = useState<string | null>(null);
   const [newPin, setNewPin] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [uidCopied, setUidCopied] = useState(false);
   const [notifPerm, setNotifPerm] = useState<BrowserNotificationPermission>(() =>
     getNotificationPermission()
   );
@@ -227,21 +232,40 @@ export const SettingsView: React.FC = () => {
 
           <div className="space-y-3">
             {user ? (
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                    {user.displayName || 'Signed in user'}
-                  </p>
-                  <p className="text-xs text-[#556075] dark:text-[#8B97AD] truncate">{user.email}</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                      {user.displayName || 'Signed in user'}
+                    </p>
+                    <p className="text-xs text-[#556075] dark:text-[#8B97AD] truncate">{user.email}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void signOutUser()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3.5 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9]"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    Sign Out
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void signOutUser()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3.5 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9]"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  Sign Out
-                </button>
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-2 text-xs">
+                  <span className="text-[#556075] dark:text-[#94A3B8] truncate font-mono">
+                    Share UID: {user.uid}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(user.uid);
+                      setUidCopied(true);
+                      setTimeout(() => setUidCopied(false), 2000);
+                    }}
+                    className="inline-flex items-center gap-1 text-[#1D4ED8] dark:text-[#60A5FA] font-medium whitespace-nowrap shrink-0"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {uidCopied ? 'Copied' : 'Copy UID'}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -294,6 +318,42 @@ export const SettingsView: React.FC = () => {
                 </button>
               )}
               <PWAInstallButton />
+            </div>
+
+            <div className="pt-3 border-t border-[#E2E6ED] dark:border-[#1F2737] flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-[#556075] dark:text-[#8B97AD]">
+                Clear local cached tasks, habits, boards, and expenses
+              </span>
+              {confirmReset ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReset(false)}
+                    className="rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-1.5 text-xs font-medium text-[#556075]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearWorkspaceData();
+                      setConfirmReset(false);
+                    }}
+                    className="rounded-lg bg-[#DC2626] px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Confirm Clear All
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-1.5 text-xs font-medium text-[#DC2626] dark:text-[#F87171] hover:bg-[#FEE2E2]/40 dark:hover:bg-[#7F1D1D]/20"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Clear Local Data
+                </button>
+              )}
             </div>
           </div>
         </section>

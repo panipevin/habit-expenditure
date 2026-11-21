@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageSquare, Plus, Send, Users } from 'lucide-react';
+import { MessageSquare, Plus, Send, UserPlus, Users } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import type { BoardStatus, TaskPriority } from '../types';
 import { formatShortDate } from '../utils/dates';
@@ -14,8 +14,10 @@ const COLUMNS: { id: BoardStatus; label: string }[] = [
 export const BoardsView: React.FC = () => {
   const {
     todayISO,
+    user,
     boards,
     addBoard,
+    addBoardMember,
     addBoardItem,
     moveBoardItemStatus,
     addBoardComment,
@@ -28,10 +30,16 @@ export const BoardsView: React.FC = () => {
   const [boardName, setBoardName] = useState('');
   const [boardDesc, setBoardDesc] = useState('');
 
+  const [newMemberOpen, setNewMemberOpen] = useState(false);
+  const [memberName, setMemberName] = useState('');
+  const [memberUid, setMemberUid] = useState('');
+
   const [newCardOpen, setNewCardOpen] = useState(false);
   const [cardTitle, setCardTitle] = useState('');
   const [cardPriority, setCardPriority] = useState<TaskPriority>('medium');
-  const [cardAssignee, setCardAssignee] = useState(activeBoard?.members[0]?.name || 'Maya Chen');
+  const [cardAssignee, setCardAssignee] = useState(
+    activeBoard?.members[0]?.name || user?.displayName || 'You'
+  );
   const [cardDueDate, setCardDueDate] = useState(todayISO);
 
   const [commentText, setCommentText] = useState('');
@@ -43,6 +51,15 @@ export const BoardsView: React.FC = () => {
     setBoardName('');
     setBoardDesc('');
     setNewBoardOpen(false);
+  };
+
+  const handleAddMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBoard || !memberName.trim()) return;
+    addBoardMember(activeBoard.id, memberName, memberUid || undefined);
+    setMemberName('');
+    setMemberUid('');
+    setNewMemberOpen(false);
   };
 
   const handleAddCard = (e: React.FormEvent) => {
@@ -78,7 +95,7 @@ export const BoardsView: React.FC = () => {
           </h1>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setNewBoardOpen((prev) => !prev)}
@@ -87,57 +104,84 @@ export const BoardsView: React.FC = () => {
             <Plus className="w-3.5 h-3.5" />
             New Board
           </button>
-          <button
-            type="button"
-            onClick={() => setNewCardOpen((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-3.5 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Card
-          </button>
+          {activeBoard && (
+            <>
+              <button
+                type="button"
+                onClick={() => setNewMemberOpen((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-white dark:bg-[#121722] px-3.5 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] whitespace-nowrap"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Add Member
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCardAssignee(activeBoard.members[0]?.name || user?.displayName || 'You');
+                  setNewCardOpen((prev) => !prev);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-3.5 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Card
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* Board Switcher & Team Roster */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-[#E9EDF3] dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] self-start overflow-x-auto max-w-full">
-          {boards.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => setSelectedBoardId(b.id)}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                activeBoard?.id === b.id
-                  ? 'bg-white dark:bg-[#1F2737] text-[#0E1525] dark:text-[#F1F5F9] shadow-2xs'
-                  : 'text-[#556075] dark:text-[#8B97AD] hover:text-[#0E1525] dark:hover:text-[#F1F5F9]'
-              }`}
-            >
-              {b.name}
-            </button>
-          ))}
-        </div>
-
-        {activeBoard && (
-          <div className="flex items-center gap-3">
-            <div className="flex -space-x-2">
-              {activeBoard.members.map((m) => (
-                <img
-                  key={m.id}
-                  src={m.avatarUrl}
-                  alt={`${m.name} (${m.role})`}
-                  title={`${m.name} — ${m.role}`}
-                  referrerPolicy="no-referrer"
-                  className="w-8 h-8 rounded-full object-cover ring-2 ring-[#F6F7F9] dark:ring-[#0A0D14]"
-                />
-              ))}
-            </div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#556075] dark:text-[#94A3B8]">
-              <Users className="w-3.5 h-3.5" />
-              {activeBoard.members.length} team members
-            </span>
+      {boards.length > 0 && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-[#E9EDF3] dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] self-start overflow-x-auto max-w-full">
+            {boards.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => setSelectedBoardId(b.id)}
+                className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  activeBoard?.id === b.id
+                    ? 'bg-white dark:bg-[#1F2737] text-[#0E1525] dark:text-[#F1F5F9] shadow-2xs'
+                    : 'text-[#556075] dark:text-[#8B97AD] hover:text-[#0E1525] dark:hover:text-[#F1F5F9]'
+                }`}
+              >
+                {b.name}
+              </button>
+            ))}
           </div>
-        )}
-      </div>
+
+          {activeBoard && (
+            <div className="flex items-center gap-3">
+              <div className="flex -space-x-2">
+                {activeBoard.members.map((m) =>
+                  m.avatarUrl ? (
+                    <img
+                      key={m.id}
+                      src={m.avatarUrl}
+                      alt={`${m.name} (${m.role})`}
+                      title={`${m.name} — ${m.role}`}
+                      referrerPolicy="no-referrer"
+                      className="w-8 h-8 rounded-full object-cover ring-2 ring-[#F6F7F9] dark:ring-[#0A0D14]"
+                    />
+                  ) : (
+                    <span
+                      key={m.id}
+                      title={`${m.name} — ${m.role}`}
+                      className="w-8 h-8 rounded-full bg-[#1D4ED8]/15 text-[#1D4ED8] dark:text-[#93C5FD] ring-2 ring-[#F6F7F9] dark:ring-[#0A0D14] flex items-center justify-center text-[11px] font-semibold"
+                    >
+                      {m.initials}
+                    </span>
+                  )
+                )}
+              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs text-[#556075] dark:text-[#94A3B8]">
+                <Users className="w-3.5 h-3.5" />
+                {activeBoard.members.length} {activeBoard.members.length === 1 ? 'member' : 'members'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* New Board Form */}
       {newBoardOpen && (
@@ -187,6 +231,81 @@ export const BoardsView: React.FC = () => {
             </button>
           </div>
         </form>
+      )}
+
+      {/* Add Board Collaborator Form */}
+      {newMemberOpen && activeBoard && (
+        <form
+          onSubmit={handleAddMember}
+          className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 p-5 grid grid-cols-1 md:grid-cols-3 gap-3 items-end"
+        >
+          <div>
+            <label htmlFor="member-name-input" className="block text-xs font-medium text-[#556075] dark:text-[#94A3B8] mb-1">
+              Collaborator name
+            </label>
+            <input
+              id="member-name-input"
+              type="text"
+              maxLength={60}
+              value={memberName}
+              onChange={(e) => setMemberName(e.target.value)}
+              placeholder="e.g. Ananya Sharma"
+              className="w-full rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-2 text-sm text-[#0E1525] dark:text-[#F1F5F9]"
+            />
+          </div>
+          <div>
+            <label htmlFor="member-uid-input" className="block text-xs font-medium text-[#556075] dark:text-[#94A3B8] mb-1">
+              Firebase User ID (optional for real-time cloud share)
+            </label>
+            <input
+              id="member-uid-input"
+              type="text"
+              maxLength={128}
+              value={memberUid}
+              onChange={(e) => setMemberUid(e.target.value)}
+              placeholder="Paste teammate UID from Security & Sync"
+              className="w-full rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-2 text-sm font-mono text-[#0E1525] dark:text-[#F1F5F9]"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => setNewMemberOpen(false)}
+              className="rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3.5 py-2 text-xs font-medium text-[#556075]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-lg bg-[#0E1525] dark:bg-[#F1F5F9] px-4 py-2 text-xs font-medium text-white dark:text-[#0E1525]"
+            >
+              Add to Board
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Empty State When No Boards Exist */}
+      {boards.length === 0 && !newBoardOpen && (
+        <section className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-10 text-center space-y-3">
+          <div className="mx-auto w-10 h-10 rounded-full bg-[#1D4ED8]/10 text-[#1D4ED8] dark:text-[#60A5FA] flex items-center justify-center">
+            <Users className="w-5 h-5" />
+          </div>
+          <h2 className="font-display text-base font-semibold text-[#0E1525] dark:text-[#F1F5F9]">
+            Create your first team board
+          </h2>
+          <p className="max-w-md mx-auto text-xs text-[#556075] dark:text-[#8B97AD] leading-relaxed">
+            Organize project deliverables across Backlog, In Progress, Review, and Done columns, invite collaborators, and share real-time updates.
+          </p>
+          <button
+            type="button"
+            onClick={() => setNewBoardOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create First Board
+          </button>
+        </section>
       )}
 
       {/* New Card Form */}

@@ -35,7 +35,20 @@ export interface FirestoreErrorInfo {
   };
 }
 
-const app = initializeApp(firebaseConfig);
+const resolvedFirebaseConfig = {
+  ...firebaseConfig,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+  firestoreDatabaseId:
+    import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
+};
+
+const app = initializeApp(resolvedFirebaseConfig);
 
 // Use persistent local IndexedDB cache for seamless offline-first access and automatic reconnect sync.
 export const db = initializeFirestore(
@@ -45,7 +58,7 @@ export const db = initializeFirestore(
       tabManager: persistentMultipleTabManager(),
     }),
   },
-  firebaseConfig.firestoreDatabaseId
+  resolvedFirebaseConfig.firestoreDatabaseId
 );
 
 export const auth = getAuth(app);

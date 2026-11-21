@@ -5,6 +5,7 @@ import type { ExpenseCategory } from '../types';
 import {
   buildAutomatedBudgetReport,
   EXPENSE_CATEGORIES,
+  formatINR,
   generateExpensesCSV,
 } from '../utils/finance';
 import { formatShortDate } from '../utils/dates';
@@ -125,13 +126,13 @@ export const ExpensesView: React.FC = () => {
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
           <p className="text-xs text-[#556075] dark:text-[#8B97AD]">Spent ({report.monthKey})</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            ${report.totalSpent.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {formatINR(report.totalSpent)}
           </p>
         </div>
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
           <p className="text-xs text-[#556075] dark:text-[#8B97AD]">Monthly Budget</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            ${report.totalBudget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {formatINR(report.totalBudget)}
           </p>
         </div>
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
@@ -143,13 +144,13 @@ export const ExpensesView: React.FC = () => {
                 : 'text-[#16A34A] dark:text-[#4ADE80]'
             }`}
           >
-            ${report.remainingBudget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {formatINR(report.remainingBudget)}
           </p>
         </div>
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
           <p className="text-xs text-[#556075] dark:text-[#8B97AD]">Daily Pace</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            ${report.dailyAverage.toFixed(2)}
+            {formatINR(report.dailyAverage)}
           </p>
         </div>
       </section>
@@ -197,7 +198,7 @@ export const ExpensesView: React.FC = () => {
             </div>
             <div>
               <label htmlFor="exp-amount" className="block text-xs font-medium text-[#556075] dark:text-[#94A3B8] mb-1">
-                Amount (USD)
+                Amount (INR ₹)
               </label>
               <input
                 id="exp-amount"
@@ -206,7 +207,7 @@ export const ExpensesView: React.FC = () => {
                 min="0.01"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="24.50"
+                placeholder="450.00"
                 className="w-full rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-2 text-sm font-mono text-[#0E1525] dark:text-[#F1F5F9]"
               />
             </div>
@@ -281,7 +282,7 @@ export const ExpensesView: React.FC = () => {
                   </span>
                   <div className="flex items-center gap-2 font-mono tabular-nums">
                     <span className="text-[#0E1525] dark:text-[#F1F5F9]">
-                      ${cat.spent.toFixed(2)}
+                      {formatINR(cat.spent)}
                     </span>
                     <span className="text-[#556075] dark:text-[#8B97AD]">/</span>
                     {editingBudgets ? (
@@ -290,11 +291,11 @@ export const ExpensesView: React.FC = () => {
                         aria-label={`Monthly cap for ${cat.category}`}
                         value={cat.limit}
                         onChange={(e) => updateBudgetLimit(cat.category, Number(e.target.value))}
-                        className="w-20 rounded border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2 py-0.5 text-right text-xs text-[#0E1525] dark:text-[#F1F5F9]"
+                        className="w-24 rounded border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2 py-0.5 text-right text-xs text-[#0E1525] dark:text-[#F1F5F9]"
                       />
                     ) : (
                       <span className="text-[#556075] dark:text-[#8B97AD]">
-                        ${cat.limit.toFixed(0)} ({cat.utilizationPct}%)
+                        {formatINR(cat.limit, false)} ({cat.utilizationPct}%)
                       </span>
                     )}
                   </div>
@@ -368,38 +369,49 @@ export const ExpensesView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737] text-sm">
-              {visibleExpenses.map((exp) => (
-                <tr
-                  key={exp.id}
-                  className="hover:bg-[#F6F7F9]/60 dark:hover:bg-[#1A2130]/40 transition-colors"
-                >
-                  <td className="py-3 px-6 font-mono text-xs tabular-nums text-[#556075] dark:text-[#94A3B8] whitespace-nowrap">
-                    {formatShortDate(exp.date)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <p className="font-medium text-[#0E1525] dark:text-[#F1F5F9]">{exp.title}</p>
-                    {exp.note && (
-                      <p className="text-xs text-[#556075] dark:text-[#8B97AD]">{exp.note}</p>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-xs text-[#556075] dark:text-[#94A3B8] whitespace-nowrap">
-                    {exp.category}
-                  </td>
-                  <td className="py-3 px-6 text-right font-mono text-sm font-medium tabular-nums text-[#0E1525] dark:text-[#F1F5F9] whitespace-nowrap">
-                    ${exp.amount.toFixed(2)}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <button
-                      type="button"
-                      aria-label={`Delete expense "${exp.title}"`}
-                      onClick={() => deleteExpense(exp.id)}
-                      className="p-1.5 rounded text-[#556075] hover:text-[#DC2626]"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+              {visibleExpenses.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-10 px-6 text-center text-xs text-[#556075] dark:text-[#8B97AD]"
+                  >
+                    No expenses recorded yet. Click &ldquo;Log Expense&rdquo; above to start tracking in INR (₹).
                   </td>
                 </tr>
-              ))}
+              ) : (
+                visibleExpenses.map((exp) => (
+                  <tr
+                    key={exp.id}
+                    className="hover:bg-[#F6F7F9]/60 dark:hover:bg-[#1A2130]/40 transition-colors"
+                  >
+                    <td className="py-3 px-6 font-mono text-xs tabular-nums text-[#556075] dark:text-[#94A3B8] whitespace-nowrap">
+                      {formatShortDate(exp.date)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <p className="font-medium text-[#0E1525] dark:text-[#F1F5F9]">{exp.title}</p>
+                      {exp.note && (
+                        <p className="text-xs text-[#556075] dark:text-[#8B97AD]">{exp.note}</p>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-xs text-[#556075] dark:text-[#94A3B8] whitespace-nowrap">
+                      {exp.category}
+                    </td>
+                    <td className="py-3 px-6 text-right font-mono text-sm font-medium tabular-nums text-[#0E1525] dark:text-[#F1F5F9] whitespace-nowrap">
+                      {formatINR(exp.amount)}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        type="button"
+                        aria-label={`Delete expense "${exp.title}"`}
+                        onClick={() => deleteExpense(exp.id)}
+                        className="p-1.5 rounded text-[#556075] hover:text-[#DC2626]"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

@@ -17,12 +17,12 @@ import { auth, db, googleProvider, handleFirestoreError, OperationType } from '.
 import { dispatchBrowserNotification } from '../lib/notifications';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
-  createSeedData,
+  createEmptyWorkspaceData,
+  createTeamMember,
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_WIDGETS,
-  TEAM_MEMBERS,
 } from '../data/seed';
-import { DEFAULT_BUDGET_LIMITS } from '../utils/finance';
+import { DEFAULT_BUDGET_LIMITS, formatINR } from '../utils/finance';
 import {
   applyGracePeriod,
   claimHabitMilestone,
@@ -53,7 +53,8 @@ import type {
   WidgetId,
 } from '../types';
 
-const STORAGE_KEY = 'cadence_workspace_state_v1';
+const LEGACY_STORAGE_KEY = 'cadence_workspace_state_v1';
+const STORAGE_KEY = 'cadence_workspace_state_v2';
 
 interface PersistedWorkspace {
   tasks: DailyTask[];
@@ -71,24 +72,30 @@ interface PersistedWorkspace {
   lastSyncedAt: string;
 }
 
-function loadInitialWorkspace(todayISO: string): PersistedWorkspace {
+function loadInitialWorkspace(): PersistedWorkspace {
   try {
+    // Clear legacy demo-seeded state so real-world deployment starts completely clean.
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PersistedWorkspace>;
-      const seed = createSeedData(todayISO);
       return {
-        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : seed.tasks,
-        habits: Array.isArray(parsed.habits) ? parsed.habits : seed.habits,
-        expenses: Array.isArray(parsed.expenses) ? parsed.expenses : seed.expenses,
-        budgetLimits: parsed.budgetLimits ? { ...DEFAULT_BUDGET_LIMITS, ...parsed.budgetLimits } : DEFAULT_BUDGET_LIMITS,
-        boards: Array.isArray(parsed.boards) && parsed.boards.length > 0 ? parsed.boards : seed.boards,
-        calendarEvents: Array.isArray(parsed.calendarEvents) ? parsed.calendarEvents : seed.calendarEvents,
-        widgets: Array.isArray(parsed.widgets) && parsed.widgets.length > 0 ? parsed.widgets : DEFAULT_WIDGETS,
+        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+        habits: Array.isArray(parsed.habits) ? parsed.habits : [],
+        expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+        budgetLimits: parsed.budgetLimits
+          ? { ...DEFAULT_BUDGET_LIMITS, ...parsed.budgetLimits }
+          : DEFAULT_BUDGET_LIMITS,
+        boards: Array.isArray(parsed.boards) ? parsed.boards : [],
+        calendarEvents: Array.isArray(parsed.calendarEvents) ? parsed.calendarEvents : [],
+        widgets:
+          Array.isArray(parsed.widgets) && parsed.widgets.length > 0
+            ? parsed.widgets
+            : DEFAULT_WIDGETS,
         notificationPrefs: parsed.notificationPrefs
           ? { ...DEFAULT_NOTIFICATION_PREFS, ...parsed.notificationPrefs }
           : DEFAULT_NOTIFICATION_PREFS,
-        notifications: Array.isArray(parsed.notifications) ? parsed.notifications : seed.notifications,
+        notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
         syncQueue: Array.isArray(parsed.syncQueue) ? parsed.syncQueue : [],
         theme: parsed.theme === 'dark' ? 'dark' : 'light',
         vaultLockEnabled: Boolean(parsed.vaultLockEnabled),
@@ -96,20 +103,20 @@ function loadInitialWorkspace(todayISO: string): PersistedWorkspace {
       };
     }
   } catch {
-    // Fall back to fresh seed data
+    // Fall back to empty clean workspace
   }
 
-  const seed = createSeedData(todayISO);
+  const empty = createEmptyWorkspaceData();
   return {
-    tasks: seed.tasks,
-    habits: seed.habits,
-    expenses: seed.expenses,
+    tasks: empty.tasks,
+    habits: empty.habits,
+    expenses: empty.expenses,
     budgetLimits: DEFAULT_BUDGET_LIMITS,
-    boards: seed.boards,
-    calendarEvents: seed.calendarEvents,
+    boards: empty.boards,
+    calendarEvents: empty.calendarEvents,
     widgets: DEFAULT_WIDGETS,
     notificationPrefs: DEFAULT_NOTIFICATION_PREFS,
-    notifications: seed.notifications,
+    notifications: empty.notifications,
     syncQueue: [],
     theme: 'light',
     vaultLockEnabled: false,
@@ -189,6 +196,7 @@ interface WorkspaceContextValue {
   // Shared Boards
   boards: SharedBoard[];
   addBoard: (name: string, description: string) => void;
+  addBoardMember: (boardId: string, name: string, memberUid?: string) => void;
   addBoardItem: (
     boardId: string,
     input: { title: string; priority: TaskPriority; assigneeName: string; dueDate: string }
@@ -220,6 +228,7 @@ interface WorkspaceContextValue {
   notifications: InAppNotification[];
   markAllNotificationsRead: () => void;
   pushAlert: (title: string, message: string, category: InAppNotification['category']) => void;
+  clearWorkspaceData: () => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -230,7 +239,7 @@ function makeId(prefix: string): string {
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const todayISO = useMemo(() => getTodayISO(), []);
-  const initial = useMemo(() => loadInitialWorkspace(todayISO), [todayISO]);
+  const initial = useMemo(() => loadInitialWorkspace(), []);
 
   const [activeSection, setActiveSection] = useState<AppSection>('dashboard');
   const [globalSearch, setGlobalSearch] = useState('');
@@ -381,28 +390,26 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       onSnapshot(
         query(collection(db, tasksPath), where('ownerId', '==', uid)),
         (snap) => {
-          if (!snap.empty) {
-            const remoteTasks: DailyTask[] = snap.docs.map((d) => {
-              const data = d.data();
-              return {
-                id: d.id,
-                ownerId: String(data.ownerId || uid),
-                title: String(data.title || ''),
-                notes: data.notes ? String(data.notes) : undefined,
-                category: String(data.category || 'General'),
-                priority: (data.priority || 'medium') as TaskPriority,
-                status: (data.status || 'todo') as TaskStatus,
-                dueDate: String(data.dueDate || todayISO),
-                dueTime: data.dueTime ? String(data.dueTime) : undefined,
-                assignedBeforeNight: Boolean(data.assignedBeforeNight),
-                reminderEnabled: Boolean(data.reminderEnabled),
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-            });
-            setTasks(remoteTasks);
-            setLastSyncedAt(new Date().toISOString());
-          }
+          const remoteTasks: DailyTask[] = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || uid),
+              title: String(data.title || ''),
+              notes: data.notes ? String(data.notes) : undefined,
+              category: String(data.category || 'General'),
+              priority: (data.priority || 'medium') as TaskPriority,
+              status: (data.status || 'todo') as TaskStatus,
+              dueDate: String(data.dueDate || todayISO),
+              dueTime: data.dueTime ? String(data.dueTime) : undefined,
+              assignedBeforeNight: Boolean(data.assignedBeforeNight),
+              reminderEnabled: Boolean(data.reminderEnabled),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          });
+          setTasks(remoteTasks);
+          setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, tasksPath)
       )
@@ -414,29 +421,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       onSnapshot(
         query(collection(db, habitsPath), where('ownerId', '==', uid)),
         (snap) => {
-          if (!snap.empty) {
-            const remoteHabits: Habit[] = snap.docs.map((d) => {
-              const data = d.data();
-              return {
-                id: d.id,
-                ownerId: String(data.ownerId || uid),
-                name: String(data.name || ''),
-                category: String(data.category || 'Focus'),
-                reminderTime: String(data.reminderTime || '08:00'),
-                completedDates: Array.isArray(data.completedDates) ? data.completedDates : [],
-                graceDates: Array.isArray(data.graceDates) ? data.graceDates : [],
-                graceTokensRemaining: typeof data.graceTokensRemaining === 'number' ? data.graceTokensRemaining : 2,
-                isPaused: Boolean(data.isPaused),
-                pauseReason: data.pauseReason ? String(data.pauseReason) : undefined,
-                pausedSince: data.pausedSince ? String(data.pausedSince) : undefined,
-                claimedMilestones: Array.isArray(data.claimedMilestones) ? data.claimedMilestones : [],
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-            });
-            setHabits(remoteHabits);
-            setLastSyncedAt(new Date().toISOString());
-          }
+          const remoteHabits: Habit[] = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || uid),
+              name: String(data.name || ''),
+              category: String(data.category || 'Focus'),
+              reminderTime: String(data.reminderTime || '08:00'),
+              completedDates: Array.isArray(data.completedDates) ? data.completedDates : [],
+              graceDates: Array.isArray(data.graceDates) ? data.graceDates : [],
+              graceTokensRemaining:
+                typeof data.graceTokensRemaining === 'number' ? data.graceTokensRemaining : 2,
+              isPaused: Boolean(data.isPaused),
+              pauseReason: data.pauseReason ? String(data.pauseReason) : undefined,
+              pausedSince: data.pausedSince ? String(data.pausedSince) : undefined,
+              claimedMilestones: Array.isArray(data.claimedMilestones) ? data.claimedMilestones : [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          });
+          setHabits(remoteHabits);
+          setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, habitsPath)
       )
@@ -448,24 +454,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       onSnapshot(
         query(collection(db, expensesPath), where('ownerId', '==', uid)),
         (snap) => {
-          if (!snap.empty) {
-            const remoteExpenses: Expense[] = snap.docs.map((d) => {
-              const data = d.data();
-              return {
-                id: d.id,
-                ownerId: String(data.ownerId || uid),
-                title: String(data.title || ''),
-                category: (data.category || 'Food') as ExpenseCategory,
-                amount: Number(data.amount || 0),
-                date: String(data.date || todayISO),
-                note: data.note ? String(data.note) : undefined,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-            });
-            setExpenses(remoteExpenses);
-            setLastSyncedAt(new Date().toISOString());
-          }
+          const remoteExpenses: Expense[] = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || uid),
+              title: String(data.title || ''),
+              category: (data.category || 'Food') as ExpenseCategory,
+              amount: Number(data.amount || 0),
+              date: String(data.date || todayISO),
+              note: data.note ? String(data.note) : undefined,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          });
+          setExpenses(remoteExpenses);
+          setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, expensesPath)
       )
@@ -477,35 +481,48 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       onSnapshot(
         query(collection(db, boardsPath), where('memberIds', 'array-contains', uid)),
         (snap) => {
-          if (snap.empty) return;
-          const activeIds = new Set<string>();
-          snap.docs.forEach((bDoc) => {
-            const bData = bDoc.data();
-            const bId = bDoc.id;
-            activeIds.add(bId);
-            const memberIds: string[] = Array.isArray(bData.memberIds) ? bData.memberIds : [uid];
+          const activeIds = new Set<string>(snap.docs.map((d) => d.id));
+          const selfMember = createTeamMember(user.displayName || 'You', uid, 'Owner');
 
-            setBoards((prev) => {
-              const existingBoard = prev.find((b) => b.id === bId);
-              const nextBoard: SharedBoard = {
+          setBoards((prev) => {
+            const prevById = new Map(prev.map((b) => [b.id, b]));
+            return snap.docs.map((bDoc) => {
+              const bData = bDoc.data();
+              const bId = bDoc.id;
+              const existingBoard = prevById.get(bId);
+              const memberIds: string[] = Array.isArray(bData.memberIds) ? bData.memberIds : [uid];
+              const members =
+                existingBoard && existingBoard.members.length > 0
+                  ? existingBoard.members
+                  : memberIds.map((mId) =>
+                      mId === uid
+                        ? selfMember
+                        : createTeamMember(`Member ${mId.slice(0, 6)}`, mId, 'Collaborator')
+                    );
+              return {
                 id: bId,
                 name: String(bData.name || 'Shared Board'),
                 description: String(bData.description || ''),
                 ownerId: String(bData.ownerId || uid),
                 memberIds,
-                members: existingBoard?.members || TEAM_MEMBERS,
+                members,
                 items: existingBoard?.items || [],
                 comments: existingBoard?.comments || [],
                 updatedAt: new Date().toISOString(),
               };
-              const others = prev.filter((b) => b.id !== bId && b.ownerId !== 'local-user');
-              return [nextBoard, ...others];
             });
+          });
 
+          snap.docs.forEach((bDoc) => {
+            const bId = bDoc.id;
             if (!boardSubUnsubs.has(bId)) {
               const itemsPath = `boards/${bId}/items`;
               const unsubItems = onSnapshot(
-                query(collection(db, itemsPath), where('boardId', '==', bId), where('memberIds', 'array-contains', uid)),
+                query(
+                  collection(db, itemsPath),
+                  where('boardId', '==', bId),
+                  where('memberIds', 'array-contains', uid)
+                ),
                 (itemSnap) => {
                   const items: BoardItem[] = itemSnap.docs.map((docSnap) => {
                     const d = docSnap.data();
@@ -528,7 +545,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
               const commentsPath = `boards/${bId}/comments`;
               const unsubComments = onSnapshot(
-                query(collection(db, commentsPath), where('boardId', '==', bId), where('memberIds', 'array-contains', uid)),
+                query(
+                  collection(db, commentsPath),
+                  where('boardId', '==', bId),
+                  where('memberIds', 'array-contains', uid)
+                ),
                 (commSnap) => {
                   const comments: BoardComment[] = commSnap.docs.map((docSnap) => {
                     const d = docSnap.data();
@@ -559,6 +580,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               boardSubUnsubs.delete(bId);
             }
           });
+          setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, boardsPath)
       )
@@ -570,25 +592,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       onSnapshot(
         query(collection(db, calPath), where('participantIds', 'array-contains', uid)),
         (snap) => {
-          if (!snap.empty) {
-            const remoteEvents: CalendarEvent[] = snap.docs.map((d) => {
-              const data = d.data();
-              return {
-                id: d.id,
-                ownerId: String(data.ownerId || uid),
-                title: String(data.title || ''),
-                eventType: (data.eventType || 'meeting') as CalendarEventType,
-                date: String(data.date || todayISO),
-                startTime: String(data.startTime || '09:00'),
-                endTime: data.endTime ? String(data.endTime) : undefined,
-                urgent: Boolean(data.urgent),
-                reminderMinutes: Number(data.reminderMinutes ?? 15),
-                participants: ['You'],
-              };
-            });
-            setCalendarEvents(remoteEvents);
-            setLastSyncedAt(new Date().toISOString());
-          }
+          const remoteEvents: CalendarEvent[] = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || uid),
+              title: String(data.title || ''),
+              eventType: (data.eventType || 'meeting') as CalendarEventType,
+              date: String(data.date || todayISO),
+              startTime: String(data.startTime || '09:00'),
+              endTime: data.endTime ? String(data.endTime) : undefined,
+              urgent: Boolean(data.urgent),
+              reminderMinutes: Number(data.reminderMinutes ?? 15),
+              participants: ['You'],
+            };
+          });
+          setCalendarEvents(remoteEvents);
+          setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, calPath)
       )
@@ -1052,7 +1072,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (limit > 0 && currentCategoryTotal > limit) {
           pushAlert(
             `${input.category} Budget Exceeded`,
-            `Monthly ${input.category} spend reached $${currentCategoryTotal.toFixed(2)} (limit $${limit.toFixed(2)}).`,
+            `Monthly ${input.category} spend reached ${formatINR(currentCategoryTotal)} (limit ${formatINR(limit)}).`,
             'budget'
           );
         }
@@ -1117,13 +1137,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const id = makeId('board');
       const nowISO = new Date().toISOString();
       const ownerId = user?.uid || 'local-user';
+      const ownerMember = createTeamMember(user?.displayName || 'You', ownerId, 'Owner');
       const newBoard: SharedBoard = {
         id,
         name: name.trim().slice(0, 80),
         description: description.trim().slice(0, 240),
         ownerId,
         memberIds: [ownerId],
-        members: boards[0]?.members || TEAM_MEMBERS,
+        members: [ownerMember],
         items: [],
         comments: [],
         updatedAt: nowISO,
@@ -1150,7 +1171,54 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, boards, queueOrSync]
+    [user, queueOrSync]
+  );
+
+  const addBoardMember = useCallback(
+    (boardId: string, name: string, memberUid?: string) => {
+      const cleanName = name.trim().slice(0, 60);
+      if (!cleanName) return;
+      const cleanUid = memberUid?.trim().slice(0, 128);
+      const memberId = cleanUid || makeId('member');
+      const newMember = createTeamMember(cleanName, memberId, 'Collaborator');
+      const targetBoard = boards.find((b) => b.id === boardId);
+      const nextMemberIds = Array.from(
+        new Set([...(targetBoard?.memberIds || []), ...(cleanUid ? [cleanUid] : [])])
+      ).slice(0, 50);
+
+      setBoards((prev) =>
+        prev.map((b) => {
+          if (b.id !== boardId) return b;
+          if (b.members.some((m) => m.id === memberId || m.name.toLowerCase() === cleanName.toLowerCase())) {
+            return b;
+          }
+          return {
+            ...b,
+            memberIds: cleanUid ? Array.from(new Set([...b.memberIds, cleanUid])).slice(0, 50) : b.memberIds,
+            members: [...b.members, newMember],
+            updatedAt: new Date().toISOString(),
+          };
+        })
+      );
+
+      if (user && cleanUid && targetBoard && targetBoard.ownerId === user.uid) {
+        queueOrSync(
+          { entity: 'boardItem', action: 'upsert', label: `Added ${cleanName} to board` },
+          async () => {
+            const path = `boards/${boardId}`;
+            try {
+              await updateDoc(doc(db, 'boards', boardId), {
+                memberIds: nextMemberIds,
+                updatedAt: serverTimestamp(),
+              });
+            } catch (err) {
+              handleFirestoreError(err, OperationType.UPDATE, path);
+            }
+          }
+        );
+      }
+    },
+    [boards, user, queueOrSync]
   );
 
   const addBoardItem = useCallback(
@@ -1414,6 +1482,24 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }, []);
 
+  const clearWorkspaceData = useCallback(() => {
+    pendingCloudActionsRef.current = [];
+    setTasks([]);
+    setHabits([]);
+    setExpenses([]);
+    setBoards([]);
+    setCalendarEvents([]);
+    setNotifications([]);
+    setSyncQueue([]);
+    setBudgetLimits(DEFAULT_BUDGET_LIMITS);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
   const value: WorkspaceContextValue = {
     todayISO,
     activeSection,
@@ -1458,6 +1544,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     updateBudgetLimit,
     boards,
     addBoard,
+    addBoardMember,
     addBoardItem,
     moveBoardItemStatus,
     addBoardComment,
@@ -1473,6 +1560,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     notifications,
     markAllNotificationsRead,
     pushAlert,
+    clearWorkspaceData,
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

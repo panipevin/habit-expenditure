@@ -11,6 +11,7 @@ import {
 import {
   buildAutomatedBudgetReport,
   DEFAULT_BUDGET_LIMITS,
+  formatINR,
   generateExpensesCSV,
 } from './finance';
 import { evaluateEveningCutoff, filterAndSortTasks } from './tasks';
@@ -54,7 +55,6 @@ test('habit streak increments across consecutive days and unlocks 7-day mileston
 
 test('habit streak resets to 0 when a day is missed without grace or pause', () => {
   const today = '2026-11-21';
-  // Completed 2, 3, 4 days ago, missed yesterday and today
   const habit = makeHabit({
     completedDates: ['2026-11-17', '2026-11-18', '2026-11-19'],
   });
@@ -106,14 +106,22 @@ test('pause mode preserves streak across multi-day break and bridges upon resume
   assert.equal(evaluateHabitStreak(checkedIn, resumeDay).currentStreak, 5);
 });
 
-test('automated budget report calculates spend, over-budget status, and CSV escaping', () => {
+test('INR currency formatting, automated budget report, and CSV export work accurately', () => {
+  assert.equal(formatINR(125000), '₹1,25,000.00');
+  assert.equal(formatINR(-500), '-₹500.00');
+  assert.equal(formatINR(53000, false), '₹53,000');
+
+  const emptyReport = buildAutomatedBudgetReport([], DEFAULT_BUDGET_LIMITS, '2026-11-21');
+  assert.equal(emptyReport.totalSpent, 0);
+  assert.ok(emptyReport.insights[0].includes('No expenses logged'));
+
   const expenses: Expense[] = [
     {
       id: 'e1',
       ownerId: 'u1',
-      title: 'Team Lunch, Downtown',
+      title: 'Team Lunch, Indiranagar',
       category: 'Food',
-      amount: 600,
+      amount: 11250,
       date: '2026-11-10',
       note: 'Client "Q4" review',
       createdAt: '2026-11-10T12:00:00Z',
@@ -122,9 +130,9 @@ test('automated budget report calculates spend, over-budget status, and CSV esca
     {
       id: 'e2',
       ownerId: 'u1',
-      title: 'Transit Pass',
+      title: 'Metro Smart Card Recharge',
       category: 'Transport',
-      amount: 85.5,
+      amount: 850.5,
       date: '2026-11-12',
       createdAt: '2026-11-12T08:00:00Z',
       updatedAt: '2026-11-12T08:00:00Z',
@@ -134,14 +142,15 @@ test('automated budget report calculates spend, over-budget status, and CSV esca
   const report = buildAutomatedBudgetReport(expenses, DEFAULT_BUDGET_LIMITS, '2026-11-21');
   const food = report.categories.find((c) => c.category === 'Food')!;
   assert.equal(food.status, 'over');
-  assert.equal(food.remaining, -50);
-  assert.equal(report.totalSpent, 685.5);
-  assert.ok(report.insights.some((i) => i.includes('Over budget in Food')));
+  assert.equal(food.remaining, -1250);
+  assert.equal(report.totalSpent, 12100.5);
+  assert.ok(report.insights.some((i) => i.includes('Over budget in Food (+₹1,250.00)')));
 
   const csv = generateExpensesCSV(expenses);
-  assert.ok(csv.includes('"Team Lunch, Downtown"'));
+  assert.ok(csv.startsWith('Date,Title,Category,Amount (INR),Notes'));
+  assert.ok(csv.includes('"Team Lunch, Indiranagar"'));
   assert.ok(csv.includes('"Client ""Q4"" review"'));
-  assert.ok(csv.includes('85.50'));
+  assert.ok(csv.includes('850.50'));
 });
 
 test('pending task search and evening cutoff evaluation work accurately', () => {
@@ -194,7 +203,7 @@ test('pending task search and evening cutoff evaluation work accurately', () => 
   const doneExcluded = filterAndSortTasks(tasks, { searchQuery: 'sprint', status: 'pending' });
   assert.equal(doneExcluded.length, 0);
 
-  const eveningNow = new Date(2026, 10, 21, 19, 30, 0); // 7:30 PM
+  const eveningNow = new Date(2026, 10, 21, 19, 30, 0);
   const cutoff = evaluateEveningCutoff(tasks, eveningNow, '2026-11-21', 21);
   assert.equal(cutoff.tomorrowISO, '2026-11-22');
   assert.equal(cutoff.tomorrowAssignedCount, 1);

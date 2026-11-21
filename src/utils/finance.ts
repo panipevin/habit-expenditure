@@ -10,15 +10,26 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Leisure',
 ];
 
+// Default monthly caps in Indian Rupees (INR); fully editable per category in the Expenses view.
 export const DEFAULT_BUDGET_LIMITS: BudgetLimits = {
-  Food: 550,
-  Transport: 220,
-  Housing: 1650,
-  Software: 140,
-  Health: 200,
-  Utilities: 190,
-  Leisure: 250,
+  Food: 10000,
+  Transport: 4000,
+  Housing: 25000,
+  Software: 2000,
+  Health: 3000,
+  Utilities: 4000,
+  Leisure: 5000,
 };
+
+export function formatINR(amount: number, showDecimals = true): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  const isNegative = safe < 0;
+  const formatted = Math.abs(safe).toLocaleString('en-IN', {
+    minimumFractionDigits: showDecimals ? 2 : 0,
+    maximumFractionDigits: showDecimals ? 2 : 0,
+  });
+  return `${isNegative ? '-' : ''}₹${formatted}`;
+}
 
 export interface CategoryBudgetReport {
   category: ExpenseCategory;
@@ -81,33 +92,42 @@ export function buildAutomatedBudgetReport(
   const projectedMonthSpend = round2(dailyAverage * daysInMonth);
 
   const insights: string[] = [];
-  const overCategories = categories.filter((c) => c.status === 'over');
-  const warningCategories = categories.filter((c) => c.status === 'warning');
 
-  if (overCategories.length > 0) {
-    const names = overCategories.map((c) => `${c.category} (+$${Math.abs(c.remaining).toFixed(2)})`).join(', ');
-    insights.push(`Over budget in ${names}. Review recurring charges before month-end.`);
-  }
-  if (warningCategories.length > 0) {
-    const names = warningCategories.map((c) => `${c.category} (${c.utilizationPct}%)`).join(', ');
-    insights.push(`Approaching monthly cap in ${names}.`);
-  }
-  if (projectedMonthSpend > totalBudget && totalBudget > 0) {
+  if (monthExpenses.length === 0) {
     insights.push(
-      `At $${dailyAverage.toFixed(2)}/day, projected spend ($${projectedMonthSpend.toLocaleString('en-US', { minimumFractionDigits: 2 })}) exceeds your $${totalBudget.toLocaleString('en-US', { minimumFractionDigits: 2 })} plan.`
+      `No expenses logged for ${monthKey} yet. Record your first daily expense to unlock automated spending pace and savings forecasts.`
     );
-  } else if (totalBudget > 0) {
-    const projectedSavings = round2(totalBudget - projectedMonthSpend);
-    insights.push(
-      `Current pace ($${dailyAverage.toFixed(2)}/day) is on track to save $${projectedSavings.toLocaleString('en-US', { minimumFractionDigits: 2 })} this month.`
-    );
-  }
+  } else {
+    const overCategories = categories.filter((c) => c.status === 'over');
+    const warningCategories = categories.filter((c) => c.status === 'warning');
 
-  const topCategory = [...categories].sort((a, b) => b.spent - a.spent)[0];
-  if (topCategory && topCategory.spent > 0) {
-    insights.push(
-      `Largest category: ${topCategory.category} at $${topCategory.spent.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${topCategory.transactionCount} ${topCategory.transactionCount === 1 ? 'entry' : 'entries'}).`
-    );
+    if (overCategories.length > 0) {
+      const names = overCategories
+        .map((c) => `${c.category} (+${formatINR(Math.abs(c.remaining))})`)
+        .join(', ');
+      insights.push(`Over budget in ${names}. Review recurring charges before month-end.`);
+    }
+    if (warningCategories.length > 0) {
+      const names = warningCategories.map((c) => `${c.category} (${c.utilizationPct}%)`).join(', ');
+      insights.push(`Approaching monthly cap in ${names}.`);
+    }
+    if (projectedMonthSpend > totalBudget && totalBudget > 0) {
+      insights.push(
+        `At ${formatINR(dailyAverage)}/day, projected spend (${formatINR(projectedMonthSpend)}) exceeds your ${formatINR(totalBudget)} monthly plan.`
+      );
+    } else if (totalBudget > 0) {
+      const projectedSavings = round2(totalBudget - projectedMonthSpend);
+      insights.push(
+        `Current pace (${formatINR(dailyAverage)}/day) is on track to save ${formatINR(projectedSavings)} this month.`
+      );
+    }
+
+    const topCategory = [...categories].sort((a, b) => b.spent - a.spent)[0];
+    if (topCategory && topCategory.spent > 0) {
+      insights.push(
+        `Largest category: ${topCategory.category} at ${formatINR(topCategory.spent)} (${topCategory.transactionCount} ${topCategory.transactionCount === 1 ? 'entry' : 'entries'}).`
+      );
+    }
   }
 
   return {
@@ -132,15 +152,17 @@ function escapeCSVCell(value: string | number): string {
 }
 
 export function generateExpensesCSV(expenses: Expense[]): string {
-  const headers = ['Date', 'Title', 'Category', 'Amount (USD)', 'Notes'];
+  const headers = ['Date', 'Title', 'Category', 'Amount (INR)', 'Notes'];
   const sorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date));
-  const rows = sorted.map((e) => [
-    escapeCSVCell(e.date),
-    escapeCSVCell(e.title),
-    escapeCSVCell(e.category),
-    escapeCSVCell(e.amount.toFixed(2)),
-    escapeCSVCell(e.note || ''),
-  ].join(','));
+  const rows = sorted.map((e) =>
+    [
+      escapeCSVCell(e.date),
+      escapeCSVCell(e.title),
+      escapeCSVCell(e.category),
+      escapeCSVCell(e.amount.toFixed(2)),
+      escapeCSVCell(e.note || ''),
+    ].join(',')
+  );
 
   return [headers.join(','), ...rows].join('\n');
 }

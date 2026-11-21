@@ -33,11 +33,11 @@ export const CalendarView: React.FC = () => {
   const [endTime, setEndTime] = useState('10:45');
   const [urgent, setUrgent] = useState(false);
   const [reminderMinutes, setReminderMinutes] = useState(15);
-  const [participantsText, setParticipantsText] = useState('Maya Chen, David Okafor');
+  const [participantsText, setParticipantsText] = useState('');
 
   const monthCells = useMemo(() => getMonthCalendarDays(year, monthIndex), [year, monthIndex]);
   const monthLabel = useMemo(
-    () => new Date(year, monthIndex, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    () => new Date(year, monthIndex, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
     [year, monthIndex]
   );
 
@@ -206,6 +206,7 @@ export const CalendarView: React.FC = () => {
                 type="text"
                 value={participantsText}
                 onChange={(e) => setParticipantsText(e.target.value)}
+                placeholder="Optional: comma-separated names"
                 className="w-full rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-2 text-sm text-[#0E1525] dark:text-[#F1F5F9]"
               />
             </div>

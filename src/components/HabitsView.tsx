@@ -125,12 +125,12 @@ export const HabitsView: React.FC = () => {
                 {rank.rank}
               </h2>
               <span className="font-mono text-sm font-semibold tabular-nums text-[#EA580C] dark:text-[#F59E0B]">
-                {totalXP.toLocaleString('en-US')} XP
+                {totalXP.toLocaleString('en-IN')} XP
               </span>
             </div>
             <p className="text-xs text-[#556075] dark:text-[#94A3B8]">
               Longest recorded streak: <span className="font-mono font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">{longestOverall} days</span> · Next tier at{' '}
-              <span className="font-mono tabular-nums">{rank.nextThreshold.toLocaleString('en-US')} XP</span>
+              <span className="font-mono tabular-nums">{rank.nextThreshold.toLocaleString('en-IN')} XP</span>
             </p>
           </div>
 
@@ -254,8 +254,29 @@ export const HabitsView: React.FC = () => {
       )}
 
       {/* Habit Streak Cards Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {enriched.map(({ habit, summary }) => {
+      {enriched.length === 0 ? (
+        <section className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-10 text-center space-y-3">
+          <div className="mx-auto w-10 h-10 rounded-full bg-[#EA580C]/10 text-[#EA580C] dark:text-[#F59E0B] flex items-center justify-center">
+            <Flame className="w-5 h-5" />
+          </div>
+          <h2 className="font-display text-base font-semibold text-[#0E1525] dark:text-[#F1F5F9]">
+            Start your first daily habit streak
+          </h2>
+          <p className="max-w-md mx-auto text-xs text-[#556075] dark:text-[#8B97AD] leading-relaxed">
+            Build consecutive daily streaks, unlock 7-day, 30-day, and 100-day XP milestone rewards, and protect streaks with Grace Shields or Pause mode.
+          </p>
+          <button
+            type="button"
+            onClick={() => setComposerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create Your First Habit
+          </button>
+        </section>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {enriched.map(({ habit, summary }) => {
           const flameHot = summary.currentStreak > 0 && !habit.isPaused;
           return (
             <article
@@ -450,7 +471,8 @@ export const HabitsView: React.FC = () => {
             </article>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {/* Pause Habit Modal */}
       {pauseModalHabitId && (

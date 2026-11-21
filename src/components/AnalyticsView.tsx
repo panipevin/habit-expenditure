@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { formatShortDate, getPastDaysISO } from '../utils/dates';
-import { buildAutomatedBudgetReport } from '../utils/finance';
+import { buildAutomatedBudgetReport, formatINR } from '../utils/finance';
 import { evaluateHabitStreak } from '../utils/streaks';
 
 export const AnalyticsView: React.FC = () => {
@@ -151,16 +151,22 @@ export const AnalyticsView: React.FC = () => {
               Spending vs. Monthly Budget
             </h2>
             <p className="text-xs text-[#556075] dark:text-[#8B97AD]">
-              Category spend compared against configured monthly caps (USD)
+              Category spend compared against configured monthly caps (INR ₹)
             </p>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={budgetChartData} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+              <BarChart data={budgetChartData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
                 <XAxis dataKey="category" tick={{ fill: axisColor, fontSize: 11 }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fill: axisColor, fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis
+                  tick={{ fill: axisColor, fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value: number) => `₹${value.toLocaleString('en-IN')}`}
+                />
                 <Tooltip
+                  formatter={(value) => formatINR(Number(value ?? 0))}
                   contentStyle={{
                     backgroundColor: theme === 'dark' ? '#121722' : '#FFFFFF',
                     borderColor: gridColor,

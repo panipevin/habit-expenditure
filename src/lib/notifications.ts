@@ -29,8 +29,8 @@ export function dispatchBrowserNotification(title: string, body: string): boolea
   try {
     new Notification(title, {
       body,
-      icon: '/pwa-192x192.png',
-      badge: '/pwa-192x192.png',
+      icon: './pwa-192x192.png',
+      badge: './pwa-192x192.png',
     });
     return true;
   } catch {

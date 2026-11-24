@@ -11,6 +11,8 @@
         "eveningCutoffHour": { "type": "number" },
         "biometricEnabled": { "type": "boolean" },
         "theme": { "type": "string", "enum": ["light", "dark"] },
+        "expenseCategories": { "type": "array", "description": "Custom expense category labels (max 30)" },
+        "budgetLimits": { "type": "object", "description": "Per-category monthly INR budget caps (max 30 entries)" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -64,7 +66,7 @@
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "title": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "category": { "type": "string", "enum": ["Food", "Transport", "Housing", "Software", "Health", "Utilities", "Leisure"] },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
         "amount": { "type": "number" },
         "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
         "note": { "type": "string", "maxLength": 240 },

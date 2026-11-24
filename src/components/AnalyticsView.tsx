@@ -16,7 +16,7 @@ import { buildAutomatedBudgetReport, formatINR } from '../utils/finance';
 import { evaluateHabitStreak } from '../utils/streaks';
 
 export const AnalyticsView: React.FC = () => {
-  const { todayISO, tasks, habits, expenses, budgetLimits, boards, theme } = useWorkspace();
+  const { todayISO, tasks, habits, expenses, expenseCategories, budgetLimits, boards, theme } = useWorkspace();
 
   const habitSeries = useMemo(() => {
     const days = getPastDaysISO(todayISO, 14);
@@ -32,8 +32,8 @@ export const AnalyticsView: React.FC = () => {
   }, [habits, todayISO]);
 
   const budgetReport = useMemo(
-    () => buildAutomatedBudgetReport(expenses, budgetLimits, todayISO),
-    [expenses, budgetLimits, todayISO]
+    () => buildAutomatedBudgetReport(expenses, budgetLimits, todayISO, expenseCategories),
+    [expenses, budgetLimits, todayISO, expenseCategories]
   );
 
   const budgetChartData = useMemo(

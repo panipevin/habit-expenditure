@@ -1,14 +1,7 @@
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskStatus = 'todo' | 'in_progress' | 'done';
 export type BoardStatus = 'backlog' | 'in_progress' | 'review' | 'done';
-export type ExpenseCategory =
-  | 'Food'
-  | 'Transport'
-  | 'Housing'
-  | 'Software'
-  | 'Health'
-  | 'Utilities'
-  | 'Leisure';
+export type ExpenseCategory = string;
 
 export type AppSection =
   | 'dashboard'

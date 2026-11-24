@@ -151,6 +151,32 @@ test('INR currency formatting, automated budget report, and CSV export work accu
   assert.ok(csv.includes('"Team Lunch, Indiranagar"'));
   assert.ok(csv.includes('"Client ""Q4"" review"'));
   assert.ok(csv.includes('850.50'));
+
+  const customExpenses: Expense[] = [
+    {
+      id: 'e3',
+      ownerId: 'u1',
+      title: 'Monthly Petrol',
+      category: 'Fuel',
+      amount: 3200,
+      date: '2026-11-15',
+      createdAt: '2026-11-15T10:00:00Z',
+      updatedAt: '2026-11-15T10:00:00Z',
+    },
+  ];
+  const customReport = buildAutomatedBudgetReport(
+    customExpenses,
+    { Groceries: 8000, Fuel: 3000 },
+    '2026-11-21',
+    ['Groceries', 'Fuel']
+  );
+  assert.deepEqual(
+    customReport.categories.map((c) => c.category),
+    ['Groceries', 'Fuel']
+  );
+  assert.equal(customReport.categories[1].status, 'over');
+  assert.equal(customReport.totalBudget, 11000);
+  assert.equal(customReport.totalSpent, 3200);
 });
 
 test('pending task search and evening cutoff evaluation work accurately', () => {

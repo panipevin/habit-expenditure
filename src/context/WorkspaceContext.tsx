@@ -22,7 +22,14 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_WIDGETS,
 } from '../data/seed';
-import { DEFAULT_BUDGET_LIMITS, formatINR } from '../utils/finance';
+import {
+  DEFAULT_BUDGET_LIMITS,
+  DEFAULT_EXPENSE_CATEGORIES,
+  formatINR,
+  MAX_EXPENSE_CATEGORIES,
+  normalizeExpenseCategories,
+  sanitizeCategoryName,
+} from '../utils/finance';
 import {
   applyGracePeriod,
   claimHabitMilestone,
@@ -60,6 +67,7 @@ interface PersistedWorkspace {
   tasks: DailyTask[];
   habits: Habit[];
   expenses: Expense[];
+  expenseCategories: ExpenseCategory[];
   budgetLimits: BudgetLimits;
   boards: SharedBoard[];
   calendarEvents: CalendarEvent[];
@@ -83,9 +91,14 @@ function loadInitialWorkspace(): PersistedWorkspace {
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
         habits: Array.isArray(parsed.habits) ? parsed.habits : [],
         expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+        expenseCategories: normalizeExpenseCategories(
+          parsed.expenseCategories,
+          parsed.budgetLimits,
+          Array.isArray(parsed.expenses) ? parsed.expenses : []
+        ),
         budgetLimits: parsed.budgetLimits
-          ? { ...DEFAULT_BUDGET_LIMITS, ...parsed.budgetLimits }
-          : DEFAULT_BUDGET_LIMITS,
+          ? { ...parsed.budgetLimits }
+          : { ...DEFAULT_BUDGET_LIMITS },
         boards: Array.isArray(parsed.boards) ? parsed.boards : [],
         calendarEvents: Array.isArray(parsed.calendarEvents) ? parsed.calendarEvents : [],
         widgets:
@@ -111,7 +124,8 @@ function loadInitialWorkspace(): PersistedWorkspace {
     tasks: empty.tasks,
     habits: empty.habits,
     expenses: empty.expenses,
-    budgetLimits: DEFAULT_BUDGET_LIMITS,
+    expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
+    budgetLimits: { ...DEFAULT_BUDGET_LIMITS },
     boards: empty.boards,
     calendarEvents: empty.calendarEvents,
     widgets: DEFAULT_WIDGETS,
@@ -182,6 +196,7 @@ interface WorkspaceContextValue {
 
   // Expenses & Budgets
   expenses: Expense[];
+  expenseCategories: ExpenseCategory[];
   budgetLimits: BudgetLimits;
   addExpense: (input: {
     title: string;
@@ -190,8 +205,31 @@ interface WorkspaceContextValue {
     date: string;
     note?: string;
   }) => void;
+  updateExpense: (
+    id: string,
+    patch: {
+      title?: string;
+      category?: ExpenseCategory;
+      amount?: number;
+      date?: string;
+      note?: string;
+    }
+  ) => void;
   deleteExpense: (id: string) => void;
   updateBudgetLimit: (category: ExpenseCategory, amount: number) => void;
+  addExpenseCategory: (
+    name: string,
+    monthlyLimit?: number
+  ) => { ok: boolean; error?: string; category?: ExpenseCategory };
+  renameExpenseCategory: (
+    oldName: string,
+    newName: string,
+    monthlyLimit?: number
+  ) => { ok: boolean; error?: string; category?: ExpenseCategory };
+  deleteExpenseCategory: (
+    name: string,
+    reassignTo?: ExpenseCategory
+  ) => { ok: boolean; error?: string };
 
   // Shared Boards
   boards: SharedBoard[];
@@ -247,6 +285,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [tasks, setTasks] = useState<DailyTask[]>(initial.tasks);
   const [habits, setHabits] = useState<Habit[]>(initial.habits);
   const [expenses, setExpenses] = useState<Expense[]>(initial.expenses);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(
+    initial.expenseCategories
+  );
   const [budgetLimits, setBudgetLimits] = useState<BudgetLimits>(initial.budgetLimits);
   const [boards, setBoards] = useState<SharedBoard[]>(initial.boards);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(initial.calendarEvents);
@@ -287,6 +328,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       tasks,
       habits,
       expenses,
+      expenseCategories,
       budgetLimits,
       boards,
       calendarEvents,
@@ -307,6 +349,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     tasks,
     habits,
     expenses,
+    expenseCategories,
     budgetLimits,
     boards,
     calendarEvents,
@@ -383,6 +426,35 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .catch((err) => {
         handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
       });
+
+    // Sync per-user profile settings (including custom expense categories & budget caps)
+    unsubs.push(
+      onSnapshot(
+        profileRef,
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          if (Array.isArray(data.expenseCategories) && data.expenseCategories.length > 0) {
+            const remoteCats = normalizeExpenseCategories(
+              data.expenseCategories.filter((c: unknown): c is string => typeof c === 'string')
+            );
+            setExpenseCategories(remoteCats);
+          }
+          if (data.budgetLimits && typeof data.budgetLimits === 'object') {
+            const cleaned: BudgetLimits = {};
+            Object.entries(data.budgetLimits as Record<string, unknown>).forEach(([k, v]) => {
+              const key = sanitizeCategoryName(k);
+              const num = Number(v);
+              if (key && Number.isFinite(num) && num >= 0) {
+                cleaned[key] = Math.round(num);
+              }
+            });
+            setBudgetLimits(cleaned);
+          }
+        },
+        (err) => handleFirestoreError(err, OperationType.GET, `users/${uid}`)
+      )
+    );
 
     // 1. Personal Tasks listener
     const tasksPath = `users/${uid}/tasks`;
@@ -1038,6 +1110,41 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [user, queueOrSync]
   );
 
+  const syncCategoryPreferencesToCloud = useCallback(
+    (nextCategories: ExpenseCategory[], nextLimits: BudgetLimits, label: string) => {
+      const boundedCats = nextCategories
+        .map((c) => sanitizeCategoryName(c))
+        .filter(Boolean)
+        .slice(0, MAX_EXPENSE_CATEGORIES);
+      const boundedLimits: BudgetLimits = {};
+      boundedCats.forEach((cat) => {
+        const val = nextLimits[cat];
+        if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
+          boundedLimits[cat] = Math.round(val);
+        }
+      });
+
+      queueOrSync(
+        { entity: 'expense', action: 'upsert', label },
+        user
+          ? async () => {
+              const path = `users/${user.uid}`;
+              try {
+                await updateDoc(doc(db, 'users', user.uid), {
+                  expenseCategories: boundedCats,
+                  budgetLimits: boundedLimits,
+                  updatedAt: serverTimestamp(),
+                });
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, path);
+              }
+            }
+          : undefined
+      );
+    },
+    [user, queueOrSync]
+  );
+
   // --- Expense & Budget Actions ---
   const addExpense = useCallback(
     (input: {
@@ -1049,11 +1156,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }) => {
       const id = makeId('exp');
       const nowISO = new Date().toISOString();
+      const cleanCategory =
+        sanitizeCategoryName(input.category) || expenseCategories[0] || 'Food';
       const entry: Expense = {
         id,
         ownerId: user?.uid || 'local-user',
         title: input.title.trim().slice(0, 120),
-        category: input.category,
+        category: cleanCategory,
         amount: Math.round(input.amount * 100) / 100,
         date: input.date,
         note: input.note?.trim().slice(0, 240) || undefined,
@@ -1066,13 +1175,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const monthPrefix = input.date.slice(0, 7);
         const currentCategoryTotal =
           expenses
-            .filter((e) => e.category === input.category && e.date.startsWith(monthPrefix))
+            .filter((e) => e.category === cleanCategory && e.date.startsWith(monthPrefix))
             .reduce((sum, e) => sum + e.amount, 0) + entry.amount;
-        const limit = budgetLimits[input.category];
+        const limit = budgetLimits[cleanCategory];
         if (limit > 0 && currentCategoryTotal > limit) {
           pushAlert(
-            `${input.category} Budget Exceeded`,
-            `Monthly ${input.category} spend reached ${formatINR(currentCategoryTotal)} (limit ${formatINR(limit)}).`,
+            `${cleanCategory} Budget Exceeded`,
+            `Monthly ${cleanCategory} spend reached ${formatINR(currentCategoryTotal)} (limit ${formatINR(limit)}).`,
             'budget'
           );
         }
@@ -1101,7 +1210,79 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, expenses, budgetLimits, notificationPrefs.budgetThresholdAlerts, pushAlert, queueOrSync]
+    [
+      user,
+      expenses,
+      expenseCategories,
+      budgetLimits,
+      notificationPrefs.budgetThresholdAlerts,
+      pushAlert,
+      queueOrSync,
+    ]
+  );
+
+  const updateExpense = useCallback(
+    (
+      id: string,
+      patch: {
+        title?: string;
+        category?: ExpenseCategory;
+        amount?: number;
+        date?: string;
+        note?: string;
+      }
+    ) => {
+      const target = expenses.find((e) => e.id === id);
+      if (!target) return;
+
+      const nextTitle =
+        patch.title !== undefined ? patch.title.trim().slice(0, 120) || target.title : target.title;
+      const nextCategory =
+        patch.category !== undefined
+          ? sanitizeCategoryName(patch.category) || target.category
+          : target.category;
+      const nextAmount =
+        patch.amount !== undefined && Number.isFinite(patch.amount) && patch.amount > 0
+          ? Math.round(patch.amount * 100) / 100
+          : target.amount;
+      const nextDate = patch.date !== undefined && patch.date.length === 10 ? patch.date : target.date;
+      const nextNote =
+        patch.note !== undefined ? patch.note.trim().slice(0, 240) || undefined : target.note;
+
+      const updated: Expense = {
+        ...target,
+        title: nextTitle,
+        category: nextCategory,
+        amount: nextAmount,
+        date: nextDate,
+        note: nextNote,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
+
+      queueOrSync(
+        { entity: 'expense', action: 'upsert', label: `Updated expense ${updated.title}` },
+        user
+          ? async () => {
+              const path = `users/${user.uid}/expenses/${id}`;
+              try {
+                await updateDoc(doc(db, 'users', user.uid, 'expenses', id), {
+                  title: updated.title,
+                  category: updated.category,
+                  amount: updated.amount,
+                  date: updated.date,
+                  note: updated.note ? updated.note : deleteField(),
+                  updatedAt: serverTimestamp(),
+                });
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, path);
+              }
+            }
+          : undefined
+      );
+    },
+    [expenses, user, queueOrSync]
   );
 
   const deleteExpense = useCallback(
@@ -1124,12 +1305,186 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [user, queueOrSync]
   );
 
-  const updateBudgetLimit = useCallback((category: ExpenseCategory, amount: number) => {
-    setBudgetLimits((prev) => ({
-      ...prev,
-      [category]: Math.max(0, Math.round(amount)),
-    }));
-  }, []);
+  const updateBudgetLimit = useCallback(
+    (category: ExpenseCategory, amount: number) => {
+      const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.round(amount)) : 0;
+      const nextLimits: BudgetLimits = {
+        ...budgetLimits,
+        [category]: safeAmount,
+      };
+      setBudgetLimits(nextLimits);
+      syncCategoryPreferencesToCloud(expenseCategories, nextLimits, `Updated ${category} budget`);
+    },
+    [budgetLimits, expenseCategories, syncCategoryPreferencesToCloud]
+  );
+
+  const addExpenseCategory = useCallback(
+    (
+      name: string,
+      monthlyLimit = 0
+    ): { ok: boolean; error?: string; category?: ExpenseCategory } => {
+      const clean = sanitizeCategoryName(name);
+      if (!clean) {
+        return { ok: false, error: 'Enter a category name.' };
+      }
+      if (expenseCategories.length >= MAX_EXPENSE_CATEGORIES) {
+        return {
+          ok: false,
+          error: `Maximum of ${MAX_EXPENSE_CATEGORIES} expense categories reached.`,
+        };
+      }
+      if (expenseCategories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+        return { ok: false, error: `"${clean}" already exists.` };
+      }
+
+      const safeLimit = Number.isFinite(monthlyLimit) ? Math.max(0, Math.round(monthlyLimit)) : 0;
+      const nextCategories = [...expenseCategories, clean];
+      const nextLimits: BudgetLimits = {
+        ...budgetLimits,
+        [clean]: safeLimit,
+      };
+
+      setExpenseCategories(nextCategories);
+      setBudgetLimits(nextLimits);
+      syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Added category ${clean}`);
+      return { ok: true, category: clean };
+    },
+    [expenseCategories, budgetLimits, syncCategoryPreferencesToCloud]
+  );
+
+  const renameExpenseCategory = useCallback(
+    (
+      oldName: string,
+      newName: string,
+      monthlyLimit?: number
+    ): { ok: boolean; error?: string; category?: ExpenseCategory } => {
+      const cleanNew = sanitizeCategoryName(newName);
+      if (!cleanNew) {
+        return { ok: false, error: 'Category name cannot be empty.' };
+      }
+      if (!expenseCategories.includes(oldName)) {
+        return { ok: false, error: 'Category not found.' };
+      }
+      const duplicate = expenseCategories.some(
+        (c) => c !== oldName && c.toLowerCase() === cleanNew.toLowerCase()
+      );
+      if (duplicate) {
+        return { ok: false, error: `"${cleanNew}" already exists.` };
+      }
+
+      const nextCategories = expenseCategories.map((c) => (c === oldName ? cleanNew : c));
+      const nextLimits: BudgetLimits = { ...budgetLimits };
+      const existingLimit = nextLimits[oldName] ?? 0;
+      if (oldName !== cleanNew) {
+        delete nextLimits[oldName];
+      }
+      nextLimits[cleanNew] =
+        monthlyLimit !== undefined && Number.isFinite(monthlyLimit)
+          ? Math.max(0, Math.round(monthlyLimit))
+          : existingLimit;
+
+      setExpenseCategories(nextCategories);
+      setBudgetLimits(nextLimits);
+      syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Edited category ${cleanNew}`);
+
+      if (oldName !== cleanNew) {
+        const affected = expenses.filter((e) => e.category === oldName);
+        if (affected.length > 0) {
+          const nowISO = new Date().toISOString();
+          setExpenses((prev) =>
+            prev.map((e) =>
+              e.category === oldName ? { ...e, category: cleanNew, updatedAt: nowISO } : e
+            )
+          );
+          queueOrSync(
+            {
+              entity: 'expense',
+              action: 'upsert',
+              label: `Renamed ${affected.length} expense(s) to ${cleanNew}`,
+            },
+            user
+              ? async () => {
+                  await Promise.all(
+                    affected.map(async (exp) => {
+                      const path = `users/${user.uid}/expenses/${exp.id}`;
+                      try {
+                        await updateDoc(doc(db, 'users', user.uid, 'expenses', exp.id), {
+                          category: cleanNew,
+                          updatedAt: serverTimestamp(),
+                        });
+                      } catch (err) {
+                        handleFirestoreError(err, OperationType.UPDATE, path);
+                      }
+                    })
+                  );
+                }
+              : undefined
+          );
+        }
+      }
+
+      return { ok: true, category: cleanNew };
+    },
+    [expenseCategories, budgetLimits, expenses, user, queueOrSync, syncCategoryPreferencesToCloud]
+  );
+
+  const deleteExpenseCategory = useCallback(
+    (name: string, reassignTo?: ExpenseCategory): { ok: boolean; error?: string } => {
+      if (expenseCategories.length <= 1) {
+        return { ok: false, error: 'Keep at least one expense category.' };
+      }
+      if (!expenseCategories.includes(name)) {
+        return { ok: false, error: 'Category not found.' };
+      }
+
+      const nextCategories = expenseCategories.filter((c) => c !== name);
+      const fallbackCategory =
+        reassignTo && nextCategories.includes(reassignTo) ? reassignTo : nextCategories[0];
+      const nextLimits: BudgetLimits = { ...budgetLimits };
+      delete nextLimits[name];
+
+      setExpenseCategories(nextCategories);
+      setBudgetLimits(nextLimits);
+      syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Removed category ${name}`);
+
+      const affected = expenses.filter((e) => e.category === name);
+      if (affected.length > 0) {
+        const nowISO = new Date().toISOString();
+        setExpenses((prev) =>
+          prev.map((e) =>
+            e.category === name ? { ...e, category: fallbackCategory, updatedAt: nowISO } : e
+          )
+        );
+        queueOrSync(
+          {
+            entity: 'expense',
+            action: 'upsert',
+            label: `Moved ${affected.length} expense(s) to ${fallbackCategory}`,
+          },
+          user
+            ? async () => {
+                await Promise.all(
+                  affected.map(async (exp) => {
+                    const path = `users/${user.uid}/expenses/${exp.id}`;
+                    try {
+                      await updateDoc(doc(db, 'users', user.uid, 'expenses', exp.id), {
+                        category: fallbackCategory,
+                        updatedAt: serverTimestamp(),
+                      });
+                    } catch (err) {
+                      handleFirestoreError(err, OperationType.UPDATE, path);
+                    }
+                  })
+                );
+              }
+            : undefined
+        );
+      }
+
+      return { ok: true };
+    },
+    [expenseCategories, budgetLimits, expenses, user, queueOrSync, syncCategoryPreferencesToCloud]
+  );
 
   // --- Shared Board Actions ---
   const addBoard = useCallback(
@@ -1491,7 +1846,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCalendarEvents([]);
     setNotifications([]);
     setSyncQueue([]);
-    setBudgetLimits(DEFAULT_BUDGET_LIMITS);
+    setExpenseCategories([...DEFAULT_EXPENSE_CATEGORIES]);
+    setBudgetLimits({ ...DEFAULT_BUDGET_LIMITS });
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(LEGACY_STORAGE_KEY);
@@ -1538,10 +1894,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     claimMilestoneReward,
     deleteHabit,
     expenses,
+    expenseCategories,
     budgetLimits,
     addExpense,
+    updateExpense,
     deleteExpense,
     updateBudgetLimit,
+    addExpenseCategory,
+    renameExpenseCategory,
+    deleteExpenseCategory,
     boards,
     addBoard,
     addBoardMember,

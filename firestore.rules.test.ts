@@ -41,6 +41,8 @@ test('dirty dozen payload invariants: strict key allowlists and bounded arrays e
   assert.ok(rulesContent.includes('isBoundedStringList(data.completedDates, 366)'));
   assert.ok(rulesContent.includes('isBoundedStringList(data.graceDates, 60)'));
   assert.ok(rulesContent.includes('isBoundedIntList(data.claimedMilestones, 10)'));
+  assert.ok(rulesContent.includes('isBoundedStringList(data.expenseCategories, 30)'));
+  assert.ok(rulesContent.includes('data.budgetLimits is map && data.budgetLimits.size() <= 30'));
   assert.ok(rulesContent.includes('data.amount is number && data.amount > 0 && data.amount <= 1000000'));
   assert.ok(rulesContent.includes('incoming().createdAt == request.time'));
   assert.ok(rulesContent.includes('incoming().updatedAt == request.time'));

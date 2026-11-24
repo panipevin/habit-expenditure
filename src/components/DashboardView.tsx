@@ -34,6 +34,7 @@ export const DashboardView: React.FC = () => {
     boards,
     calendarEvents,
     expenses,
+    expenseCategories,
     budgetLimits,
     widgets,
     toggleWidgetVisibility,
@@ -74,8 +75,8 @@ export const DashboardView: React.FC = () => {
   const rankInfo = useMemo(() => getRankTitle(totalStreakXP), [totalStreakXP]);
 
   const budgetReport = useMemo(
-    () => buildAutomatedBudgetReport(expenses, budgetLimits, todayISO),
-    [expenses, budgetLimits, todayISO]
+    () => buildAutomatedBudgetReport(expenses, budgetLimits, todayISO, expenseCategories),
+    [expenses, budgetLimits, todayISO, expenseCategories]
   );
 
   const upcomingEvents = useMemo(

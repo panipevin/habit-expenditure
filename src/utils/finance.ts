@@ -1,6 +1,9 @@
 import type { BudgetLimits, Expense, ExpenseCategory } from '../types';
 
-export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
+export const MAX_EXPENSE_CATEGORIES = 30;
+export const MAX_EXPENSE_CATEGORY_LENGTH = 40;
+
+export const DEFAULT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Food',
   'Transport',
   'Housing',
@@ -9,6 +12,9 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Utilities',
   'Leisure',
 ];
+
+// Backwards-compatible alias for default categories
+export const EXPENSE_CATEGORIES: ExpenseCategory[] = DEFAULT_EXPENSE_CATEGORIES;
 
 // Default monthly caps in Indian Rupees (INR); fully editable per category in the Expenses view.
 export const DEFAULT_BUDGET_LIMITS: BudgetLimits = {
@@ -20,6 +26,48 @@ export const DEFAULT_BUDGET_LIMITS: BudgetLimits = {
   Utilities: 4000,
   Leisure: 5000,
 };
+
+export function sanitizeCategoryName(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_EXPENSE_CATEGORY_LENGTH);
+}
+
+export function normalizeExpenseCategories(
+  categories?: string[],
+  budgetLimits?: BudgetLimits,
+  expenses?: Expense[]
+): ExpenseCategory[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  const pushUnique = (raw: string) => {
+    const clean = sanitizeCategoryName(raw);
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key) || result.length >= MAX_EXPENSE_CATEGORIES) return;
+    seen.add(key);
+    result.push(clean);
+  };
+
+  if (Array.isArray(categories) && categories.length > 0) {
+    categories.forEach((c) => {
+      if (typeof c === 'string') pushUnique(c);
+    });
+  } else {
+    DEFAULT_EXPENSE_CATEGORIES.forEach(pushUnique);
+  }
+
+  if (budgetLimits) {
+    Object.keys(budgetLimits).forEach(pushUnique);
+  }
+
+  if (Array.isArray(expenses)) {
+    expenses.forEach((e) => {
+      if (typeof e.category === 'string') pushUnique(e.category);
+    });
+  }
+
+  return result.length > 0 ? result : [...DEFAULT_EXPENSE_CATEGORIES];
+}
 
 export function formatINR(amount: number, showDecimals = true): string {
   const safe = Number.isFinite(amount) ? amount : 0;
@@ -56,7 +104,8 @@ export interface AutomatedBudgetReport {
 export function buildAutomatedBudgetReport(
   expenses: Expense[],
   limits: BudgetLimits,
-  referenceDateISO: string
+  referenceDateISO: string,
+  configuredCategories?: ExpenseCategory[]
 ): AutomatedBudgetReport {
   const monthKey = referenceDateISO.slice(0, 7);
   const dayOfMonth = Math.max(1, Number(referenceDateISO.slice(8, 10)) || 1);
@@ -65,14 +114,28 @@ export function buildAutomatedBudgetReport(
 
   const monthExpenses = expenses.filter((e) => e.date.startsWith(monthKey));
 
-  const categories: CategoryBudgetReport[] = EXPENSE_CATEGORIES.map((category) => {
+  const categoryList = normalizeExpenseCategories(
+    configuredCategories && configuredCategories.length > 0
+      ? configuredCategories
+      : DEFAULT_EXPENSE_CATEGORIES,
+    configuredCategories && configuredCategories.length > 0 ? undefined : limits,
+    monthExpenses
+  );
+
+  const categories: CategoryBudgetReport[] = categoryList.map((category) => {
     const items = monthExpenses.filter((e) => e.category === category);
     const spent = round2(items.reduce((sum, e) => sum + e.amount, 0));
     const limit = limits[category] || 0;
     const remaining = round2(limit - spent);
-    const utilizationPct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+    const utilizationPct = limit > 0 ? Math.round((spent / limit) * 100) : spent > 0 ? 100 : 0;
     const status: CategoryBudgetReport['status'] =
-      utilizationPct > 100 ? 'over' : utilizationPct >= 80 ? 'warning' : 'healthy';
+      limit > 0
+        ? utilizationPct > 100
+          ? 'over'
+          : utilizationPct >= 80
+          ? 'warning'
+          : 'healthy'
+        : 'healthy';
     return {
       category,
       spent,

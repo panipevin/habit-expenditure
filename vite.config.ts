@@ -20,7 +20,7 @@ export default defineConfig(({ command }) => {
           id: basePath,
           name: 'Cadence Workspace',
           short_name: 'Cadence',
-          description: 'Offline-first workspace for daily tasks, gamified habit streaks, team boards, calendar reminders, and personal expense tracking in INR.',
+          description: 'Offline-first workspace for daily tasks, gamified habit streaks, read-only family account sharing, calendar reminders, and personal expense tracking in INR.',
           theme_color: '#1D4ED8',
           background_color: '#F6F7F9',
           display: 'standalone',

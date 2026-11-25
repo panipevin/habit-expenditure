@@ -6,10 +6,10 @@ import {
   Cloud,
   CloudOff,
   Flame,
-  KanbanSquare,
   LayoutGrid,
   Lock,
   Settings,
+  Users,
   Wallet,
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -20,7 +20,7 @@ const NAV_ITEMS: { id: AppSection; label: string; icon: React.ComponentType<{ cl
   { id: 'dashboard', label: 'Overview', icon: LayoutGrid },
   { id: 'tasks', label: 'Daily Tasks', icon: CheckSquare },
   { id: 'habits', label: 'Habit Streaks', icon: Flame },
-  { id: 'boards', label: 'Team Boards', icon: KanbanSquare },
+  { id: 'family', label: 'Family & Sharing', icon: Users },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'expenses', label: 'Expenses', icon: Wallet },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -39,6 +39,9 @@ export const Sidebar: React.FC = () => {
     syncQueue,
     vaultLockEnabled,
     lockVault,
+    connectedAccounts,
+    viewingAccountId,
+    setViewingAccountId,
   } = useWorkspace();
 
   const pendingTaskCount = tasks.filter((t) => t.status !== 'done').length;
@@ -67,6 +70,33 @@ export const Sidebar: React.FC = () => {
           </span>
         </button>
       </div>
+
+      {/* Quick Account Switcher when connected to family accounts */}
+      {connectedAccounts.length > 0 && (
+        <div className="px-3 pt-4">
+          <label
+            htmlFor="sidebar-account-switcher"
+            className="block px-1 text-[11px] font-medium text-[#556075] dark:text-[#8B97AD] mb-1"
+          >
+            Viewing Account
+          </label>
+          <select
+            id="sidebar-account-switcher"
+            value={viewingAccountId || '__self__'}
+            onChange={(e) =>
+              setViewingAccountId(e.target.value === '__self__' ? null : e.target.value)
+            }
+            className="w-full h-9 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2.5 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9]"
+          >
+            <option value="__self__">My Account (Editable)</option>
+            {connectedAccounts.map((acc) => (
+              <option key={acc.ownerId} value={acc.ownerId}>
+                {acc.displayName} (Read-Only)
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Navigation Links */}
       <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
@@ -97,6 +127,11 @@ export const Sidebar: React.FC = () => {
               {item.id === 'habits' && topStreak > 0 && (
                 <span className="font-mono text-xs tabular-nums text-[#D97706] dark:text-[#F59E0B]">
                   {topStreak}d
+                </span>
+              )}
+              {item.id === 'family' && connectedAccounts.length > 0 && (
+                <span className="font-mono text-xs tabular-nums text-[#1D4ED8] dark:text-[#60A5FA]">
+                  {connectedAccounts.length}
                 </span>
               )}
             </button>

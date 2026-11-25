@@ -1,13 +1,12 @@
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskStatus = 'todo' | 'in_progress' | 'done';
-export type BoardStatus = 'backlog' | 'in_progress' | 'review' | 'done';
 export type ExpenseCategory = string;
 
 export type AppSection =
   | 'dashboard'
   | 'tasks'
   | 'habits'
-  | 'boards'
+  | 'family'
   | 'calendar'
   | 'expenses'
   | 'analytics'
@@ -60,47 +59,29 @@ export interface Expense {
 
 export type BudgetLimits = Record<ExpenseCategory, number>;
 
-export interface TeamMember {
-  id: string;
+export interface ConnectedViewer {
+  uid: string;
   name: string;
-  role: string;
-  avatarUrl: string;
-  initials: string;
-  status: 'active' | 'focus' | 'offline';
 }
 
-export interface BoardItem {
-  id: string;
-  boardId: string;
-  creatorId: string;
-  title: string;
-  status: BoardStatus;
-  priority: TaskPriority;
-  assigneeName: string;
-  assigneeAvatar?: string;
-  dueDate: string;
+export interface SharedAccountProfile {
+  ownerId: string;
+  displayName: string;
+  expenseCategories: ExpenseCategory[];
+  budgetLimits: BudgetLimits;
+  viewerIds: string[];
+  viewerNames: Record<string, string>;
   updatedAt: string;
 }
 
-export interface BoardComment {
-  id: string;
-  boardId: string;
-  authorId: string;
-  authorName: string;
-  authorAvatar?: string;
-  body: string;
+export interface ShareInvite {
+  code: string;
+  creatorId: string;
+  creatorName: string;
+  status: 'open' | 'accepted';
+  acceptedByUid?: string;
+  acceptedByName?: string;
   createdAt: string;
-}
-
-export interface SharedBoard {
-  id: string;
-  name: string;
-  description: string;
-  ownerId: string;
-  memberIds: string[];
-  members: TeamMember[];
-  items: BoardItem[];
-  comments: BoardComment[];
   updatedAt: string;
 }
 
@@ -117,14 +98,13 @@ export interface CalendarEvent {
   urgent: boolean;
   reminderMinutes: number;
   participants: string[];
-  boardName?: string;
 }
 
 export type WidgetId =
   | 'tasks'
   | 'habits'
   | 'calendar'
-  | 'boards'
+  | 'family'
   | 'expenses'
   | 'analytics';
 
@@ -149,14 +129,14 @@ export interface InAppNotification {
   id: string;
   title: string;
   message: string;
-  category: 'deadline' | 'streak' | 'team' | 'budget' | 'sync';
+  category: 'deadline' | 'streak' | 'family' | 'budget' | 'sync';
   timestamp: string;
   read: boolean;
 }
 
 export interface SyncQueueItem {
   id: string;
-  entity: 'task' | 'habit' | 'expense' | 'boardItem' | 'boardComment' | 'calendarEvent';
+  entity: 'task' | 'habit' | 'expense' | 'sharing' | 'calendarEvent';
   action: 'upsert' | 'delete';
   label: string;
   queuedAt: string;

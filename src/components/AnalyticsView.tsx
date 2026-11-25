@@ -16,7 +16,7 @@ import { buildAutomatedBudgetReport, formatINR } from '../utils/finance';
 import { evaluateHabitStreak } from '../utils/streaks';
 
 export const AnalyticsView: React.FC = () => {
-  const { todayISO, tasks, habits, expenses, expenseCategories, budgetLimits, boards, theme } = useWorkspace();
+  const { todayISO, tasks, habits, expenses, expenseCategories, budgetLimits, theme } = useWorkspace();
 
   const habitSeries = useMemo(() => {
     const days = getPastDaysISO(todayISO, 14);
@@ -57,10 +57,9 @@ export const AnalyticsView: React.FC = () => {
     return Math.round((sum / habits.length) * 10) / 10;
   }, [habits, todayISO]);
 
-  const boardItemsTotal = boards.reduce((s, b) => s + b.items.length, 0);
-  const boardItemsDone = boards.reduce(
-    (s, b) => s + b.items.filter((i) => i.status === 'done').length,
-    0
+  const activeHabitsToday = useMemo(
+    () => habits.filter((h) => h.completedDates.includes(todayISO)).length,
+    [habits, todayISO]
   );
 
   const axisColor = theme === 'dark' ? '#8B97AD' : '#556075';
@@ -70,7 +69,7 @@ export const AnalyticsView: React.FC = () => {
     <div className="space-y-6">
       <div>
         <p className="text-xs font-medium text-[#556075] dark:text-[#8B97AD]">
-          Unified progress analytics · Tasks, habit consistency, team velocity &amp; spending
+          Unified progress analytics · Tasks, habit consistency &amp; monthly spending
         </p>
         <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
           Progress Analytics
@@ -92,9 +91,9 @@ export const AnalyticsView: React.FC = () => {
           </p>
         </div>
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
-          <p className="text-xs text-[#556075] dark:text-[#8B97AD]">Team Cards Shipped</p>
+          <p className="text-xs text-[#556075] dark:text-[#8B97AD]">Habits Checked Today</p>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            {boardItemsDone}/{boardItemsTotal}
+            {activeHabitsToday}/{habits.length}
           </p>
         </div>
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">

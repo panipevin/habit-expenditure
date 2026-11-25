@@ -24,6 +24,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidInviteCode(code) {
+      return code is string && code.size() >= 6 && code.size() <= 16 && code.matches('^[A-Z0-9]+$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -64,10 +68,37 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSharedProfile(data) {
+      return data.keys().hasAll(['ownerId', 'displayName', 'viewerIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'displayName', 'expenseCategories', 'budgetLimits', 'viewerIds', 'viewerNames', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('expenseCategories' in data) || isBoundedStringList(data.expenseCategories, 30))
+        && (!('budgetLimits' in data) || (data.budgetLimits is map && data.budgetLimits.size() <= 30))
+        && isBoundedStringList(data.viewerIds, 25)
+        && (!('viewerNames' in data) || (data.viewerNames is map && data.viewerNames.size() <= 25))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidShareInvite(data, inviteCode) {
+      return data.keys().hasAll(['code', 'creatorId', 'creatorName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['code', 'creatorId', 'creatorName', 'status', 'acceptedByUid', 'acceptedByName', 'createdAt', 'updatedAt'])
+        && data.code is string && data.code == inviteCode && isValidInviteCode(data.code)
+        && data.creatorId is string && isValidId(data.creatorId)
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 80
+        && data.status is string && data.status in ['open', 'accepted']
+        && (!('acceptedByUid' in data) || (data.acceptedByUid is string && isValidId(data.acceptedByUid)))
+        && (!('acceptedByName' in data) || (data.acceptedByName is string && data.acceptedByName.size() >= 1 && data.acceptedByName.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidTask(data) {
       return data.keys().hasAll(['ownerId', 'title', 'category', 'priority', 'status', 'dueDate', 'assignedBeforeNight', 'reminderEnabled', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['ownerId', 'title', 'notes', 'category', 'priority', 'status', 'dueDate', 'dueTime', 'assignedBeforeNight', 'reminderEnabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'viewerIds', 'title', 'notes', 'category', 'priority', 'status', 'dueDate', 'dueTime', 'assignedBeforeNight', 'reminderEnabled', 'createdAt', 'updatedAt'])
         && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && (!('viewerIds' in data) || isBoundedStringList(data.viewerIds, 25))
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
@@ -83,8 +114,9 @@ service cloud.firestore {
 
     function isValidHabit(data) {
       return data.keys().hasAll(['ownerId', 'name', 'category', 'completedDates', 'graceDates', 'graceTokensRemaining', 'isPaused', 'claimedMilestones', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['ownerId', 'name', 'category', 'reminderTime', 'completedDates', 'graceDates', 'graceTokensRemaining', 'isPaused', 'pauseReason', 'pausedSince', 'claimedMilestones', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'viewerIds', 'name', 'category', 'reminderTime', 'completedDates', 'graceDates', 'graceTokensRemaining', 'isPaused', 'pauseReason', 'pausedSince', 'claimedMilestones', 'createdAt', 'updatedAt'])
         && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && (!('viewerIds' in data) || isBoundedStringList(data.viewerIds, 25))
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
         && (!('reminderTime' in data) || isValidTimeStr(data.reminderTime))
@@ -101,8 +133,9 @@ service cloud.firestore {
 
     function isValidExpense(data) {
       return data.keys().hasAll(['ownerId', 'title', 'category', 'amount', 'date', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['ownerId', 'title', 'category', 'amount', 'date', 'note', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'viewerIds', 'title', 'category', 'amount', 'date', 'note', 'createdAt', 'updatedAt'])
         && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && (!('viewerIds' in data) || isBoundedStringList(data.viewerIds, 25))
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
         && data.amount is number && data.amount > 0 && data.amount <= 1000000
@@ -110,45 +143,6 @@ service cloud.firestore {
         && (!('note' in data) || (data.note is string && data.note.size() <= 240))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
-    }
-
-    function isValidBoard(data) {
-      return data.keys().hasAll(['name', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['name', 'description', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
-        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
-        && (!('description' in data) || (data.description is string && data.description.size() <= 240))
-        && data.ownerId is string && isValidId(data.ownerId)
-        && isBoundedStringList(data.memberIds, 25)
-        && data.memberIds.size() >= 1
-        && data.ownerId in data.memberIds
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
-    }
-
-    function isValidBoardItem(data, boardId) {
-      return data.keys().hasAll(['boardId', 'creatorId', 'memberIds', 'title', 'status', 'priority', 'assigneeName', 'dueDate', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['boardId', 'creatorId', 'memberIds', 'title', 'status', 'priority', 'assigneeName', 'dueDate', 'createdAt', 'updatedAt'])
-        && data.boardId is string && data.boardId == boardId && isValidId(data.boardId)
-        && data.creatorId is string && isValidId(data.creatorId)
-        && isBoundedStringList(data.memberIds, 25) && data.memberIds.size() >= 1
-        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
-        && data.status is string && data.status in ['backlog', 'in_progress', 'review', 'done']
-        && data.priority is string && data.priority in ['low', 'medium', 'high', 'urgent']
-        && data.assigneeName is string && data.assigneeName.size() >= 1 && data.assigneeName.size() <= 60
-        && isValidDateStr(data.dueDate)
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
-    }
-
-    function isValidBoardComment(data, boardId) {
-      return data.keys().hasAll(['boardId', 'authorId', 'memberIds', 'authorName', 'body', 'createdAt'])
-        && data.keys().hasOnly(['boardId', 'authorId', 'memberIds', 'authorName', 'body', 'createdAt'])
-        && data.boardId is string && data.boardId == boardId && isValidId(data.boardId)
-        && data.authorId is string && data.authorId == request.auth.uid && isValidId(data.authorId)
-        && isBoundedStringList(data.memberIds, 25) && data.memberIds.size() >= 1
-        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
-        && data.body is string && data.body.size() >= 1 && data.body.size() <= 400
-        && data.createdAt is timestamp;
     }
 
     function isValidCalendarEvent(data) {
@@ -168,17 +162,7 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    function isBoardMember(boardId) {
-      return exists(/databases/$(database)/documents/boards/$(boardId))
-        && request.auth.uid in get(/databases/$(database)/documents/boards/$(boardId)).data.memberIds;
-    }
-
-    function matchesParentMembers(boardId, memberIds) {
-      return exists(/databases/$(database)/documents/boards/$(boardId))
-        && get(/databases/$(database)/documents/boards/$(boardId)).data.memberIds == memberIds;
-    }
-
-    // --- Private User Profile & Subcollections (PII Isolated) ---
+    // --- Private User Profile (Strictly Owner-Only PII Isolation) ---
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
@@ -194,9 +178,12 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'eveningCutoffHour', 'biometricEnabled', 'theme', 'expenseCategories', 'budgetLimits', 'updatedAt']);
       allow delete: if isVerified() && isValidId(userId) && isOwner(userId);
 
+      // Personal Tasks: Owner read/write; connected viewerIds read-only
       match /tasks/{taskId} {
-        allow get: if isValidId(userId) && isValidId(taskId) && isOwner(userId);
-        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(taskId)
+          && (isOwner(userId) || ('viewerIds' in existing() && request.auth.uid in existing().viewerIds));
+        allow list: if isSignedIn()
+          && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.viewerIds);
         allow create: if isVerified() && isValidId(userId) && isValidId(taskId) && isOwner(userId)
           && isValidTask(incoming())
           && incoming().createdAt == request.time
@@ -208,14 +195,18 @@ service cloud.firestore {
           && incoming().updatedAt == request.time
           && (
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
-            || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'notes', 'category', 'priority', 'status', 'dueDate', 'dueTime', 'assignedBeforeNight', 'reminderEnabled', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['viewerIds', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'notes', 'category', 'priority', 'status', 'dueDate', 'dueTime', 'assignedBeforeNight', 'reminderEnabled', 'viewerIds', 'updatedAt'])
           );
         allow delete: if isVerified() && isValidId(userId) && isValidId(taskId) && isOwner(userId);
       }
 
+      // Personal Habits: Owner read/write; connected viewerIds read-only
       match /habits/{habitId} {
-        allow get: if isValidId(userId) && isValidId(habitId) && isOwner(userId);
-        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(habitId)
+          && (isOwner(userId) || ('viewerIds' in existing() && request.auth.uid in existing().viewerIds));
+        allow list: if isSignedIn()
+          && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.viewerIds);
         allow create: if isVerified() && isValidId(userId) && isValidId(habitId) && isOwner(userId)
           && isValidHabit(incoming())
           && incoming().createdAt == request.time
@@ -229,14 +220,18 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['completedDates', 'claimedMilestones', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['graceDates', 'graceTokensRemaining', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['isPaused', 'pauseReason', 'pausedSince', 'graceDates', 'updatedAt'])
-            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'reminderTime', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['viewerIds', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'reminderTime', 'viewerIds', 'updatedAt'])
           );
         allow delete: if isVerified() && isValidId(userId) && isValidId(habitId) && isOwner(userId);
       }
 
+      // Personal Expenses: Owner read/write; connected viewerIds read-only
       match /expenses/{expenseId} {
-        allow get: if isValidId(userId) && isValidId(expenseId) && isOwner(userId);
-        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(expenseId)
+          && (isOwner(userId) || ('viewerIds' in existing() && request.auth.uid in existing().viewerIds));
+        allow list: if isSignedIn()
+          && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.viewerIds);
         allow create: if isVerified() && isValidId(userId) && isValidId(expenseId) && isOwner(userId)
           && isValidExpense(incoming())
           && incoming().createdAt == request.time
@@ -246,71 +241,64 @@ service cloud.firestore {
           && incoming().ownerId == existing().ownerId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'amount', 'date', 'note', 'updatedAt']);
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['viewerIds', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'amount', 'date', 'note', 'viewerIds', 'updatedAt'])
+          );
         allow delete: if isVerified() && isValidId(userId) && isValidId(expenseId) && isOwner(userId);
       }
     }
 
-    // --- Shared Multi-User Team Boards ---
-    match /boards/{boardId} {
-      allow get: if isSignedIn() && isValidId(boardId) && request.auth.uid in existing().memberIds;
-      allow list: if isSignedIn() && request.auth.uid in resource.data.memberIds;
-      allow create: if isVerified() && isValidId(boardId)
-        && isValidBoard(incoming())
-        && incoming().ownerId == request.auth.uid
+    // --- Non-PII Split Shared Profiles (Read-Only for Connected Family Viewers) ---
+    match /sharedProfiles/{profileId} {
+      allow get: if isSignedIn() && isValidId(profileId)
+        && (isOwner(profileId) || request.auth.uid in existing().viewerIds);
+      allow list: if isSignedIn()
+        && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.viewerIds);
+      allow create: if isVerified() && isValidId(profileId) && isOwner(profileId)
+        && isValidSharedProfile(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(boardId)
-        && isValidBoard(incoming())
-        && existing().ownerId == request.auth.uid
+      allow update: if isVerified() && isValidId(profileId) && isOwner(profileId)
+        && isValidSharedProfile(incoming())
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'memberIds', 'updatedAt']);
-      allow delete: if isVerified() && isValidId(boardId) && existing().ownerId == request.auth.uid;
-
-      match /items/{itemId} {
-        allow get: if isSignedIn() && isValidId(boardId) && isValidId(itemId) && isBoardMember(boardId);
-        allow list: if isSignedIn() && resource.data.boardId == boardId && request.auth.uid in resource.data.memberIds;
-        allow create: if isVerified() && isValidId(boardId) && isValidId(itemId)
-          && isValidBoardItem(incoming(), boardId)
-          && incoming().creatorId == request.auth.uid
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time
-          && isBoardMember(boardId)
-          && matchesParentMembers(boardId, incoming().memberIds);
-        allow update: if isVerified() && isValidId(boardId) && isValidId(itemId)
-          && isValidBoardItem(incoming(), boardId)
-          && incoming().boardId == existing().boardId
-          && incoming().creatorId == existing().creatorId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
-          && isBoardMember(boardId)
-          && (
-            (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-            || (existing().creatorId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'status', 'priority', 'assigneeName', 'dueDate', 'memberIds', 'updatedAt']))
-          );
-        allow delete: if isVerified() && isValidId(boardId) && isValidId(itemId)
-          && existing().creatorId == request.auth.uid
-          && isBoardMember(boardId);
-      }
-
-      match /comments/{commentId} {
-        allow get: if isSignedIn() && isValidId(boardId) && isValidId(commentId) && isBoardMember(boardId);
-        allow list: if isSignedIn() && resource.data.boardId == boardId && request.auth.uid in resource.data.memberIds;
-        allow create: if isVerified() && isValidId(boardId) && isValidId(commentId)
-          && isValidBoardComment(incoming(), boardId)
-          && incoming().createdAt == request.time
-          && isBoardMember(boardId)
-          && matchesParentMembers(boardId, incoming().memberIds);
-        allow update: if false;
-        allow delete: if isVerified() && isValidId(boardId) && isValidId(commentId)
-          && existing().authorId == request.auth.uid
-          && isBoardMember(boardId);
-      }
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'expenseCategories', 'budgetLimits', 'viewerIds', 'viewerNames', 'updatedAt']);
+      allow delete: if isVerified() && isValidId(profileId) && isOwner(profileId);
     }
 
-    // --- Integrated Calendar (Team Meetings & Individual Deadlines) ---
+    // --- Single-Use Family Connection Invite Codes (Terminal State Locked) ---
+    match /shareInvites/{inviteCode} {
+      allow get: if isSignedIn() && isValidInviteCode(inviteCode);
+      allow list: if isSignedIn()
+        && (resource.data.creatorId == request.auth.uid || resource.data.acceptedByUid == request.auth.uid);
+      allow create: if isVerified() && isValidInviteCode(inviteCode)
+        && isValidShareInvite(incoming(), inviteCode)
+        && incoming().creatorId == request.auth.uid
+        && incoming().status == 'open'
+        && !('acceptedByUid' in incoming())
+        && !('acceptedByName' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidInviteCode(inviteCode)
+        && isValidShareInvite(incoming(), inviteCode)
+        && existing().status == 'open'
+        && incoming().status == 'accepted'
+        && existing().creatorId != request.auth.uid
+        && incoming().creatorId == existing().creatorId
+        && incoming().creatorName == existing().creatorName
+        && incoming().code == existing().code
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().acceptedByUid == request.auth.uid
+        && ('acceptedByName' in incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedByUid', 'acceptedByName', 'updatedAt']);
+      allow delete: if isVerified() && isValidInviteCode(inviteCode)
+        && (existing().creatorId == request.auth.uid || existing().acceptedByUid == request.auth.uid);
+    }
+
+    // --- Integrated Calendar (Owner Read/Write; Connected ParticipantIds Read-Only) ---
     match /calendarEvents/{eventId} {
       allow get: if isSignedIn() && isValidId(eventId)
         && (existing().ownerId == request.auth.uid || request.auth.uid in existing().participantIds);
@@ -327,7 +315,10 @@ service cloud.firestore {
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'eventType', 'date', 'startTime', 'endTime', 'urgent', 'reminderMinutes', 'participantIds', 'updatedAt']);
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['participantIds', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'eventType', 'date', 'startTime', 'endTime', 'urgent', 'reminderMinutes', 'participantIds', 'updatedAt'])
+        );
       allow delete: if isVerified() && isValidId(eventId) && existing().ownerId == request.auth.uid;
     }
   }

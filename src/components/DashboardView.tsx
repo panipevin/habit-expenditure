@@ -31,7 +31,11 @@ export const DashboardView: React.FC = () => {
     habits,
     toggleHabitToday,
     claimMilestoneReward,
-    boards,
+    connectedAccounts,
+    myViewers,
+    isReadOnlyView,
+    viewingAccountName,
+    setViewingAccountId,
     calendarEvents,
     expenses,
     expenseCategories,
@@ -100,25 +104,27 @@ export const DashboardView: React.FC = () => {
             {!effectiveOnline ? ` · Offline mode (${syncQueue.length} queued)` : ''}
           </p>
           <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
-            Command Overview
+            {isReadOnlyView && viewingAccountName ? `${viewingAccountName}'s Overview` : 'Command Overview'}
           </h1>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <PWAInstallButton compact />
-          <button
-            type="button"
-            onClick={() => setCustomizing((prev) => !prev)}
-            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
-              customizing
-                ? 'bg-[#0E1525] text-white border-[#0E1525] dark:bg-[#F1F5F9] dark:text-[#0E1525] dark:border-[#F1F5F9]'
-                : 'bg-white dark:bg-[#121722] text-[#0E1525] dark:text-[#F1F5F9] border-[#E2E6ED] dark:border-[#1F2737] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130]'
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            {customizing ? 'Done Customizing' : 'Customize Widgets'}
-          </button>
-        </div>
+        {!isReadOnlyView && (
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <PWAInstallButton compact />
+            <button
+              type="button"
+              onClick={() => setCustomizing((prev) => !prev)}
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
+                customizing
+                  ? 'bg-[#0E1525] text-white border-[#0E1525] dark:bg-[#F1F5F9] dark:text-[#0E1525] dark:border-[#F1F5F9]'
+                  : 'bg-white dark:bg-[#121722] text-[#0E1525] dark:text-[#F1F5F9] border-[#E2E6ED] dark:border-[#1F2737] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130]'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              {customizing ? 'Done Customizing' : 'Customize Widgets'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Top 4-Column Architectural KPI Strip */}
@@ -157,18 +163,18 @@ export const DashboardView: React.FC = () => {
         </div>
 
         <div className="rounded-xl bg-white dark:bg-[#121722] border border-[#E2E6ED] dark:border-[#1F2737] p-5">
-          <p className="text-xs font-medium text-[#556075] dark:text-[#8B97AD]">Team Boards</p>
+          <p className="text-xs font-medium text-[#556075] dark:text-[#8B97AD]">Connected Accounts</p>
           <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-[#0E1525] dark:text-[#F1F5F9]">
-            {boards.reduce((s, b) => s + b.items.filter((i) => i.status !== 'done').length, 0)}
+            {connectedAccounts.length}
           </p>
           <p className="mt-1 text-xs text-[#556075] dark:text-[#94A3B8]">
-            Active cards across {boards.length} {boards.length === 1 ? 'board' : 'boards'}
+            {myViewers.length} read-only {myViewers.length === 1 ? 'viewer' : 'viewers'} on your account
           </p>
         </div>
       </section>
 
       {/* Customizable Widget Controls Panel */}
-      {customizing && (
+      {customizing && !isReadOnlyView && (
         <section
           aria-label="Widget layout customizer"
           className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 dark:border-[#3B82F6]/40 p-5"
@@ -298,18 +304,28 @@ export const DashboardView: React.FC = () => {
                       pendingTasks.slice(0, 4).map((task) => (
                         <div key={task.id} className="py-3 flex items-start justify-between gap-3">
                           <div className="flex items-start gap-3 min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => toggleTaskStatus(task.id)}
-                              aria-label={`Mark "${task.title}" complete`}
-                              className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
-                            >
-                              {task.status === 'done' ? (
-                                <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
-                              ) : (
-                                <Circle className="w-4 h-4" />
-                              )}
-                            </button>
+                            {isReadOnlyView ? (
+                              <span className="mt-0.5 text-[#556075] dark:text-[#8B97AD] shrink-0">
+                                {task.status === 'done' ? (
+                                  <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
+                                ) : (
+                                  <Circle className="w-4 h-4" />
+                                )}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => toggleTaskStatus(task.id)}
+                                aria-label={`Mark "${task.title}" complete`}
+                                className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
+                              >
+                                {task.status === 'done' ? (
+                                  <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
+                                ) : (
+                                  <Circle className="w-4 h-4" />
+                                )}
+                              </button>
+                            )}
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
                                 {task.title}
@@ -381,7 +397,7 @@ export const DashboardView: React.FC = () => {
                               <Flame className="w-3.5 h-3.5 fill-current" />
                               {summary.currentStreak}
                             </span>
-                            {summary.unclaimedMilestones.length > 0 ? (
+                            {!isReadOnlyView && summary.unclaimedMilestones.length > 0 ? (
                               <button
                                 type="button"
                                 onClick={() =>
@@ -392,7 +408,7 @@ export const DashboardView: React.FC = () => {
                                 <Trophy className="w-3 h-3" />
                                 Claim
                               </button>
-                            ) : (
+                            ) : !isReadOnlyView ? (
                               <button
                                 type="button"
                                 disabled={habit.isPaused}
@@ -410,6 +426,16 @@ export const DashboardView: React.FC = () => {
                               >
                                 <Check className="w-4 h-4" />
                               </button>
+                            ) : (
+                              <span
+                                className={`text-[11px] font-medium ${
+                                  summary.completedToday
+                                    ? 'text-[#16A34A] dark:text-[#4ADE80]'
+                                    : 'text-[#556075] dark:text-[#8B97AD]'
+                                }`}
+                              >
+                                {summary.completedToday ? 'Done today' : 'Pending'}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -469,8 +495,7 @@ export const DashboardView: React.FC = () => {
               );
             }
 
-            if (widget.id === 'boards') {
-              const activeBoard = boards[0];
+            if (widget.id === 'family') {
               return (
                 <section
                   key={widget.id}
@@ -479,55 +504,56 @@ export const DashboardView: React.FC = () => {
                   <div className="flex items-center justify-between gap-3 pb-4 border-b border-[#E2E6ED] dark:border-[#1F2737]">
                     <div>
                       <h2 className="font-display text-base font-semibold text-[#0E1525] dark:text-[#F1F5F9]">
-                        Shared Team Boards Pulse
+                        Connected Family Accounts
                       </h2>
                       <p className="mt-0.5 text-xs text-[#556075] dark:text-[#94A3B8]">
-                        {activeBoard
-                          ? `${activeBoard.name} · ${activeBoard.members.length} ${activeBoard.members.length === 1 ? 'member' : 'members'}`
-                          : 'No shared boards created yet'}
+                        {connectedAccounts.length > 0
+                          ? `${connectedAccounts.length} linked ${connectedAccounts.length === 1 ? 'account' : 'accounts'} · Strict read-only viewing`
+                          : 'Link another phone with a 6-character Share Code'}
                       </p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setActiveSection('boards')}
+                      onClick={() => setActiveSection('family')}
                       className="inline-flex items-center gap-1 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:underline whitespace-nowrap shrink-0"
                     >
-                      Open Boards <ArrowRight className="w-3.5 h-3.5" />
+                      Manage Sharing <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                   <div className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737]">
-                    {!activeBoard || activeBoard.items.length === 0 ? (
+                    {connectedAccounts.length === 0 ? (
                       <div className="py-8 text-center">
                         <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9]">
-                          {activeBoard ? 'No cards on this board yet' : 'Start your first shared board'}
+                          No family accounts connected yet
                         </p>
                         <p className="mt-1 text-xs text-[#556075] dark:text-[#8B97AD]">
-                          Create a project board to track status updates and collaborate in real time.
+                          Sign in on each phone and link via Share Code to view each other&apos;s tasks, habits, and expenses without editing.
                         </p>
                       </div>
                     ) : (
-                      activeBoard.items.slice(0, 3).map((item) => (
-                        <div key={item.id} className="py-3 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
-                              {item.title}
-                            </p>
-                            <p className="mt-0.5 text-xs text-[#556075] dark:text-[#8B97AD]">
-                              {item.assigneeName} · {item.status.replace('_', ' ')} · Due {formatShortDate(item.dueDate)}
-                            </p>
-                          </div>
-                          {item.assigneeAvatar ? (
-                            <img
-                              src={item.assigneeAvatar}
-                              alt={item.assigneeName}
-                              referrerPolicy="no-referrer"
-                              className="w-7 h-7 rounded-full object-cover shrink-0 border border-[#E2E6ED] dark:border-[#1F2737]"
-                            />
-                          ) : (
-                            <span className="w-7 h-7 rounded-full bg-[#1D4ED8]/15 text-[#1D4ED8] dark:text-[#93C5FD] flex items-center justify-center text-[11px] font-semibold shrink-0">
-                              {item.assigneeName.slice(0, 2).toUpperCase()}
+                      connectedAccounts.slice(0, 3).map((acc) => (
+                        <div key={acc.ownerId} className="py-3 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-8 h-8 rounded-full bg-[#1D4ED8]/15 text-[#1D4ED8] dark:text-[#93C5FD] flex items-center justify-center text-xs font-semibold shrink-0">
+                              {acc.displayName.slice(0, 2).toUpperCase()}
                             </span>
-                          )}
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
+                                {acc.displayName}
+                              </p>
+                              <p className="text-xs text-[#556075] dark:text-[#8B97AD]">
+                                Read-only access enabled
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setViewingAccountId(acc.ownerId)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-1.5 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] whitespace-nowrap shrink-0"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            View Account
+                          </button>
                         </div>
                       ))
                     )}

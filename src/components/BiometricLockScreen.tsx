@@ -70,7 +70,7 @@ export const BiometricLockScreen: React.FC = () => {
           Cadence Privacy Vault
         </h1>
         <p className="mt-2 text-center text-sm text-[#556075] dark:text-[#94A3B8]">
-          Verify your identity to access personal expenses, habits, and team boards.
+          Verify your identity to access personal expenses, habit streaks, and daily tasks.
         </p>
 
         {capability?.enrolled && (

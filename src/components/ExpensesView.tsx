@@ -23,6 +23,8 @@ export const ExpensesView: React.FC = () => {
     addExpenseCategory,
     renameExpenseCategory,
     deleteExpenseCategory,
+    isReadOnlyView,
+    viewingAccountName,
   } = useWorkspace();
 
   const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | 'All'>('All');
@@ -224,7 +226,7 @@ export const ExpensesView: React.FC = () => {
             Private personal ledger · Automated monthly budget reports &amp; CSV export
           </p>
           <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
-            Daily Expenses
+            {isReadOnlyView && viewingAccountName ? `${viewingAccountName}'s Expenses` : 'Daily Expenses'}
           </h1>
         </div>
 
@@ -237,14 +239,16 @@ export const ExpensesView: React.FC = () => {
             <Download className="w-3.5 h-3.5" />
             Download CSV
           </button>
-          <button
-            type="button"
-            onClick={() => setComposerOpen((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            Log Expense
-          </button>
+          {!isReadOnlyView && (
+            <button
+              type="button"
+              onClick={() => setComposerOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              Log Expense
+            </button>
+          )}
         </div>
       </div>
 
@@ -289,7 +293,7 @@ export const ExpensesView: React.FC = () => {
       </section>
 
       {/* Log Expense Form */}
-      {composerOpen && (
+      {composerOpen && !isReadOnlyView && (
         <form
           onSubmit={handleAddExpense}
           className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 p-6 space-y-4"
@@ -442,26 +446,30 @@ export const ExpensesView: React.FC = () => {
                 Categories &amp; Monthly Budgets
               </h2>
               <p className="text-[11px] text-[#556075] dark:text-[#8B97AD]">
-                Add custom categories or click edit to rename &amp; adjust monthly caps
+                {isReadOnlyView
+                  ? 'Read-only monthly category spending and budget caps'
+                  : 'Add custom categories or click edit to rename & adjust monthly caps'}
               </p>
             </div>
-            <button
-              type="button"
-              disabled={expenseCategories.length >= MAX_EXPENSE_CATEGORIES}
-              onClick={() => {
-                setEditingCategory(null);
-                setEditCategoryError(null);
-                setCategoryError(null);
-                setAddingCategory((prev) => !prev);
-              }}
-              className="inline-flex items-center gap-1 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-1.5 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:bg-[#EEF2FF] dark:hover:bg-[#1A2130] disabled:opacity-50"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Category
-            </button>
+            {!isReadOnlyView && (
+              <button
+                type="button"
+                disabled={expenseCategories.length >= MAX_EXPENSE_CATEGORIES}
+                onClick={() => {
+                  setEditingCategory(null);
+                  setEditCategoryError(null);
+                  setCategoryError(null);
+                  setAddingCategory((prev) => !prev);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-3 py-1.5 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:bg-[#EEF2FF] dark:hover:bg-[#1A2130] disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Category
+              </button>
+            )}
           </div>
 
-          {addingCategory && (
+          {addingCategory && !isReadOnlyView && (
             <form
               onSubmit={handleAddCategorySubmit}
               className="rounded-lg border border-[#1D4ED8]/30 bg-[#F6F7F9]/80 dark:bg-[#0A0D14] p-3.5 space-y-3"
@@ -633,7 +641,7 @@ export const ExpensesView: React.FC = () => {
                           <span className="font-medium text-[#0E1525] dark:text-[#F1F5F9] truncate">
                             {cat.category}
                           </span>
-                          {isConfigured && (
+                          {isConfigured && !isReadOnlyView && (
                             <button
                               type="button"
                               aria-label={`Edit category ${cat.category}`}
@@ -725,22 +733,24 @@ export const ExpensesView: React.FC = () => {
                 <th className="py-3 px-4">Description</th>
                 <th className="py-3 px-4">Category</th>
                 <th className="py-3 px-6 text-right">Amount</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                {!isReadOnlyView && <th className="py-3 px-4 text-right">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E6ED] dark:divide-[#1F2737] text-sm">
               {visibleExpenses.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={isReadOnlyView ? 4 : 5}
                     className="py-10 px-6 text-center text-xs text-[#556075] dark:text-[#8B97AD]"
                   >
-                    No expenses recorded yet. Click &ldquo;Log Expense&rdquo; above to start tracking in INR (₹).
+                    {isReadOnlyView
+                      ? 'No expenses recorded yet on this account.'
+                      : 'No expenses recorded yet. Click "Log Expense" above to start tracking in INR (₹).'}
                   </td>
                 </tr>
               ) : (
                 visibleExpenses.map((exp) => {
-                  const isEditingExp = editingExpenseId === exp.id;
+                  const isEditingExp = !isReadOnlyView && editingExpenseId === exp.id;
 
                   if (isEditingExp) {
                     const rowCategories = expenseCategories.includes(editExpCategory)
@@ -846,26 +856,28 @@ export const ExpensesView: React.FC = () => {
                       <td className="py-3 px-6 text-right font-mono text-sm font-medium tabular-nums text-[#0E1525] dark:text-[#F1F5F9] whitespace-nowrap">
                         {formatINR(exp.amount)}
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            aria-label={`Edit expense "${exp.title}"`}
-                            onClick={() => startEditingExpense(exp)}
-                            className="p-1.5 rounded text-[#556075] hover:text-[#1D4ED8] dark:hover:text-[#60A5FA]"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Delete expense "${exp.title}"`}
-                            onClick={() => deleteExpense(exp.id)}
-                            className="p-1.5 rounded text-[#556075] hover:text-[#DC2626]"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
+                      {!isReadOnlyView && (
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              aria-label={`Edit expense "${exp.title}"`}
+                              onClick={() => startEditingExpense(exp)}
+                              className="p-1.5 rounded text-[#556075] hover:text-[#1D4ED8] dark:hover:text-[#60A5FA]"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Delete expense "${exp.title}"`}
+                              onClick={() => deleteExpense(exp.id)}
+                              className="p-1.5 rounded text-[#556075] hover:text-[#DC2626]"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })

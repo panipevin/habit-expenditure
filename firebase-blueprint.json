@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Private per-user profile, notification preferences, widget layout, and biometric lock configuration.",
+      "description": "Private per-user profile, notification preferences, expense categories, budget caps, and biometric lock configuration. Strictly readable and writable only by the owner.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -18,12 +18,45 @@
       },
       "required": ["uid", "displayName", "eveningCutoffHour", "biometricEnabled", "theme", "createdAt", "updatedAt"]
     },
-    "DailyTask": {
-      "title": "DailyTask",
-      "description": "Personal daily task scheduled with evening cutoff tracking and reminder timing.",
+    "SharedProfile": {
+      "title": "SharedProfile",
+      "description": "Non-PII split profile allowing explicitly connected family members read-only visibility into display name, categories, and monthly budget caps without exposing private account details or email.",
       "type": "object",
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "expenseCategories": { "type": "array", "description": "Custom expense category labels (max 30)" },
+        "budgetLimits": { "type": "object", "description": "Per-category monthly INR budget caps (max 30 entries)" },
+        "viewerIds": { "type": "array", "description": "Connected user UIDs granted read-only access (max 25)" },
+        "viewerNames": { "type": "object", "description": "Display names for connected viewer UIDs (max 25 entries)" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "displayName", "viewerIds", "createdAt", "updatedAt"]
+    },
+    "ShareInvite": {
+      "title": "ShareInvite",
+      "description": "Single-use invite code for mutually linking two signed-in user accounts for read-only viewing across devices.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 6, "maxLength": 16, "pattern": "^[A-Z0-9]+$" },
+        "creatorId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "type": "string", "enum": ["open", "accepted"] },
+        "acceptedByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "acceptedByName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "creatorId", "creatorName", "status", "createdAt", "updatedAt"]
+    },
+    "DailyTask": {
+      "title": "DailyTask",
+      "description": "Personal daily task scheduled with evening cutoff tracking. Owner can edit; connected viewerIds have read-only access.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "viewerIds": { "type": "array", "description": "Connected user UIDs granted read-only access (max 25)" },
         "title": { "type": "string", "minLength": 1, "maxLength": 160 },
         "notes": { "type": "string", "maxLength": 500 },
         "category": { "type": "string", "minLength": 1, "maxLength": 40 },
@@ -40,10 +73,11 @@
     },
     "Habit": {
       "title": "Habit",
-      "description": "Personal daily habit with consecutive streak history, milestone tracking, grace days, and pause state.",
+      "description": "Personal daily habit with consecutive streak history, milestone tracking, grace days, and pause state. Owner can edit; connected viewerIds have read-only access.",
       "type": "object",
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "viewerIds": { "type": "array", "description": "Connected user UIDs granted read-only access (max 25)" },
         "name": { "type": "string", "minLength": 1, "maxLength": 80 },
         "category": { "type": "string", "minLength": 1, "maxLength": 40 },
         "reminderTime": { "type": "string", "maxLength": 5 },
@@ -61,10 +95,11 @@
     },
     "Expense": {
       "title": "Expense",
-      "description": "Private daily expense record per user for automated budget reporting and CSV export.",
+      "description": "Daily expense record per user for automated budget reporting and CSV export. Owner can edit; connected viewerIds have read-only access.",
       "type": "object",
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "viewerIds": { "type": "array", "description": "Connected user UIDs granted read-only access (max 25)" },
         "title": { "type": "string", "minLength": 1, "maxLength": 120 },
         "category": { "type": "string", "minLength": 1, "maxLength": 40 },
         "amount": { "type": "number" },
@@ -75,59 +110,13 @@
       },
       "required": ["ownerId", "title", "category", "amount", "date", "createdAt", "updatedAt"]
     },
-    "SharedBoard": {
-      "title": "SharedBoard",
-      "description": "Multi-user collaborative workspace board.",
-      "type": "object",
-      "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "description": { "type": "string", "maxLength": 240 },
-        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "memberIds": { "type": "array", "description": "Bounded list of member UIDs (max 25)" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["name", "ownerId", "memberIds", "createdAt", "updatedAt"]
-    },
-    "BoardItem": {
-      "title": "BoardItem",
-      "description": "Collaborative task card inside a shared team board.",
-      "type": "object",
-      "properties": {
-        "boardId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "creatorId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "memberIds": { "type": "array", "description": "Bounded board member UIDs for secure list queries (max 25)" },
-        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "status": { "type": "string", "enum": ["backlog", "in_progress", "review", "done"] },
-        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
-        "assigneeName": { "type": "string", "minLength": 1, "maxLength": 60 },
-        "dueDate": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["boardId", "creatorId", "memberIds", "title", "status", "priority", "assigneeName", "dueDate", "createdAt", "updatedAt"]
-    },
-    "BoardComment": {
-      "title": "BoardComment",
-      "description": "Real-time internal team communication comment on a shared board.",
-      "type": "object",
-      "properties": {
-        "boardId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "authorId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "memberIds": { "type": "array", "description": "Bounded board member UIDs for secure list queries (max 25)" },
-        "authorName": { "type": "string", "minLength": 1, "maxLength": 60 },
-        "body": { "type": "string", "minLength": 1, "maxLength": 400 },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["boardId", "authorId", "memberIds", "authorName", "body", "createdAt"]
-    },
     "CalendarEvent": {
       "title": "CalendarEvent",
-      "description": "Integrated team meeting or personal deadline synced on the workspace calendar.",
+      "description": "Integrated calendar event synced across devices. Owner can edit; connected participantIds have read-only visibility.",
       "type": "object",
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "participantIds": { "type": "array", "description": "Bounded list of participant UIDs (max 25)" },
+        "participantIds": { "type": "array", "description": "Owner and connected viewer UIDs (max 25)" },
         "title": { "type": "string", "minLength": 1, "maxLength": 120 },
         "eventType": { "type": "string", "enum": ["meeting", "deadline", "reminder"] },
         "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
@@ -144,35 +133,31 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Private user settings, evening cutoff, and biometric lock config."
+      "description": "Private user settings, email PII, evening cutoff, and biometric lock config (owner-only)."
+    },
+    "/sharedProfiles/{profileId}": {
+      "schema": { "$ref": "#/entities/SharedProfile" },
+      "description": "Non-PII display profile and budget configuration readable by explicitly connected family viewers."
+    },
+    "/shareInvites/{inviteCode}": {
+      "schema": { "$ref": "#/entities/ShareInvite" },
+      "description": "Single-use invite codes for linking two signed-in user accounts for mutual read-only viewing."
     },
     "/users/{userId}/tasks/{taskId}": {
       "schema": { "$ref": "#/entities/DailyTask" },
-      "description": "Personal daily tasks with evening cutoff scheduling."
+      "description": "Daily tasks (owner read/write; connected viewerIds read-only)."
     },
     "/users/{userId}/habits/{habitId}": {
       "schema": { "$ref": "#/entities/Habit" },
-      "description": "Personal gamified habits with streak history, grace shields, and pause state."
+      "description": "Gamified habits with streak history (owner read/write; connected viewerIds read-only)."
     },
     "/users/{userId}/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/Expense" },
-      "description": "Private daily expense ledger per user."
-    },
-    "/boards/{boardId}": {
-      "schema": { "$ref": "#/entities/SharedBoard" },
-      "description": "Shared multi-user project boards."
-    },
-    "/boards/{boardId}/items/{itemId}": {
-      "schema": { "$ref": "#/entities/BoardItem" },
-      "description": "Tasks tracked inside a shared team board."
-    },
-    "/boards/{boardId}/comments/{commentId}": {
-      "schema": { "$ref": "#/entities/BoardComment" },
-      "description": "Real-time team communication feed inside a shared board."
+      "description": "Daily expense ledger (owner read/write; connected viewerIds read-only)."
     },
     "/calendarEvents/{eventId}": {
       "schema": { "$ref": "#/entities/CalendarEvent" },
-      "description": "Unified calendar for team meetings and individual deadlines."
+      "description": "Unified calendar events (owner read/write; connected participantIds read-only)."
     }
   }
 }

@@ -6,6 +6,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -18,7 +19,6 @@ import { dispatchBrowserNotification } from '../lib/notifications';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
   createEmptyWorkspaceData,
-  createTeamMember,
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_WIDGETS,
 } from '../data/seed';
@@ -37,22 +37,32 @@ import {
   setHabitPauseState,
   toggleHabitCompletionForDate,
 } from '../utils/streaks';
+import {
+  addViewerToAccessList,
+  buildConnectedViewersList,
+  generateShareInviteCode,
+  isValidShareInviteCode,
+  MAX_CONNECTED_VIEWERS,
+  migrateLegacyWidgets,
+  normalizeShareInviteCode,
+  removeViewerFromAccessList,
+  sanitizeDisplayName,
+} from '../utils/sharing';
 import { getTodayISO, isBeforeEveningCutoff } from '../utils/dates';
 import type {
   AppSection,
-  BoardComment,
-  BoardItem,
-  BoardStatus,
   BudgetLimits,
   CalendarEvent,
   CalendarEventType,
+  ConnectedViewer,
   DailyTask,
   Expense,
   ExpenseCategory,
   Habit,
   InAppNotification,
   NotificationPreferences,
-  SharedBoard,
+  SharedAccountProfile,
+  ShareInvite,
   SyncQueueItem,
   TaskPriority,
   TaskStatus,
@@ -69,7 +79,6 @@ interface PersistedWorkspace {
   expenses: Expense[];
   expenseCategories: ExpenseCategory[];
   budgetLimits: BudgetLimits;
-  boards: SharedBoard[];
   calendarEvents: CalendarEvent[];
   widgets: WidgetConfig[];
   notificationPrefs: NotificationPreferences;
@@ -82,7 +91,6 @@ interface PersistedWorkspace {
 
 function loadInitialWorkspace(): PersistedWorkspace {
   try {
-    // Clear legacy demo-seeded state so real-world deployment starts completely clean.
     localStorage.removeItem(LEGACY_STORAGE_KEY);
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -99,12 +107,8 @@ function loadInitialWorkspace(): PersistedWorkspace {
         budgetLimits: parsed.budgetLimits
           ? { ...parsed.budgetLimits }
           : { ...DEFAULT_BUDGET_LIMITS },
-        boards: Array.isArray(parsed.boards) ? parsed.boards : [],
         calendarEvents: Array.isArray(parsed.calendarEvents) ? parsed.calendarEvents : [],
-        widgets:
-          Array.isArray(parsed.widgets) && parsed.widgets.length > 0
-            ? parsed.widgets
-            : DEFAULT_WIDGETS,
+        widgets: migrateLegacyWidgets(parsed.widgets, DEFAULT_WIDGETS),
         notificationPrefs: parsed.notificationPrefs
           ? { ...DEFAULT_NOTIFICATION_PREFS, ...parsed.notificationPrefs }
           : DEFAULT_NOTIFICATION_PREFS,
@@ -126,7 +130,6 @@ function loadInitialWorkspace(): PersistedWorkspace {
     expenses: empty.expenses,
     expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
     budgetLimits: { ...DEFAULT_BUDGET_LIMITS },
-    boards: empty.boards,
     calendarEvents: empty.calendarEvents,
     widgets: DEFAULT_WIDGETS,
     notificationPrefs: DEFAULT_NOTIFICATION_PREFS,
@@ -136,6 +139,30 @@ function loadInitialWorkspace(): PersistedWorkspace {
     vaultLockEnabled: false,
     lastSyncedAt: new Date().toISOString(),
   };
+}
+
+function cleanBudgetLimitsMap(raw: unknown): BudgetLimits {
+  const cleaned: BudgetLimits = {};
+  if (!raw || typeof raw !== 'object') return cleaned;
+  Object.entries(raw as Record<string, unknown>).forEach(([k, v]) => {
+    const key = sanitizeCategoryName(k);
+    const num = Number(v);
+    if (key && Number.isFinite(num) && num >= 0) {
+      cleaned[key] = Math.round(num);
+    }
+  });
+  return cleaned;
+}
+
+function cleanViewerNamesMap(raw: unknown): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object') return cleaned;
+  Object.entries(raw as Record<string, unknown>).forEach(([k, v]) => {
+    if (typeof v === 'string' && k.trim()) {
+      cleaned[k.trim()] = sanitizeDisplayName(v);
+    }
+  });
+  return cleaned;
 }
 
 interface WorkspaceContextValue {
@@ -159,6 +186,21 @@ interface WorkspaceContextValue {
   lastSyncedAt: string;
   flushSyncQueue: () => void;
 
+  // Family & Connected Read-Only Accounts
+  viewingAccountId: string | null;
+  isReadOnlyView: boolean;
+  viewingAccountName: string | null;
+  setViewingAccountId: (accountId: string | null) => void;
+  connectedAccounts: SharedAccountProfile[];
+  myViewers: ConnectedViewer[];
+  activeInvite: ShareInvite | null;
+  createShareInvite: () => Promise<{ ok: boolean; code?: string; error?: string }>;
+  cancelShareInvite: () => Promise<void>;
+  connectWithInviteCode: (
+    rawCode: string
+  ) => Promise<{ ok: boolean; connectedName?: string; error?: string }>;
+  revokeViewerAccess: (viewerUid: string) => Promise<void>;
+
   // Theme
   theme: 'light' | 'dark';
   toggleTheme: () => void;
@@ -170,7 +212,7 @@ interface WorkspaceContextValue {
   lockVault: () => void;
   unlockVault: () => void;
 
-  // Tasks
+  // Tasks (active account: own or read-only viewed family member)
   tasks: DailyTask[];
   addTask: (input: {
     title: string;
@@ -185,7 +227,7 @@ interface WorkspaceContextValue {
   updateTaskStatus: (id: string, status: TaskStatus) => void;
   deleteTask: (id: string) => void;
 
-  // Habits
+  // Habits (active account)
   habits: Habit[];
   addHabit: (input: { name: string; category: string; reminderTime: string }) => void;
   toggleHabitToday: (id: string) => void;
@@ -194,7 +236,7 @@ interface WorkspaceContextValue {
   claimMilestoneReward: (habitId: string, milestoneDays: number) => void;
   deleteHabit: (id: string) => void;
 
-  // Expenses & Budgets
+  // Expenses & Budgets (active account)
   expenses: Expense[];
   expenseCategories: ExpenseCategory[];
   budgetLimits: BudgetLimits;
@@ -231,18 +273,7 @@ interface WorkspaceContextValue {
     reassignTo?: ExpenseCategory
   ) => { ok: boolean; error?: string };
 
-  // Shared Boards
-  boards: SharedBoard[];
-  addBoard: (name: string, description: string) => void;
-  addBoardMember: (boardId: string, name: string, memberUid?: string) => void;
-  addBoardItem: (
-    boardId: string,
-    input: { title: string; priority: TaskPriority; assigneeName: string; dueDate: string }
-  ) => void;
-  moveBoardItemStatus: (boardId: string, itemId: string, status: BoardStatus) => void;
-  addBoardComment: (boardId: string, body: string) => void;
-
-  // Calendar
+  // Calendar (active account)
   calendarEvents: CalendarEvent[];
   addCalendarEvent: (input: {
     title: string;
@@ -282,15 +313,49 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activeSection, setActiveSection] = useState<AppSection>('dashboard');
   const [globalSearch, setGlobalSearch] = useState('');
 
-  const [tasks, setTasks] = useState<DailyTask[]>(initial.tasks);
-  const [habits, setHabits] = useState<Habit[]>(initial.habits);
-  const [expenses, setExpenses] = useState<Expense[]>(initial.expenses);
-  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(
+  // Owner's own editable workspace state
+  const [myTasks, setMyTasks] = useState<DailyTask[]>(initial.tasks);
+  const [myHabits, setMyHabits] = useState<Habit[]>(initial.habits);
+  const [myExpenses, setMyExpenses] = useState<Expense[]>(initial.expenses);
+  const [myExpenseCategories, setMyExpenseCategories] = useState<ExpenseCategory[]>(
     initial.expenseCategories
   );
-  const [budgetLimits, setBudgetLimits] = useState<BudgetLimits>(initial.budgetLimits);
-  const [boards, setBoards] = useState<SharedBoard[]>(initial.boards);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(initial.calendarEvents);
+  const [myBudgetLimits, setMyBudgetLimits] = useState<BudgetLimits>(initial.budgetLimits);
+  const [myCalendarEvents, setMyCalendarEvents] = useState<CalendarEvent[]>(initial.calendarEvents);
+
+  // Connected family accounts & strict read-only viewing state
+  const [viewingAccountId, setViewingAccountIdState] = useState<string | null>(null);
+  const [myViewerIds, setMyViewerIds] = useState<string[]>([]);
+  const [myViewerNames, setMyViewerNames] = useState<Record<string, string>>({});
+  const [connectedAccounts, setConnectedAccounts] = useState<SharedAccountProfile[]>([]);
+  const [activeInvite, setActiveInvite] = useState<ShareInvite | null>(null);
+
+  const [viewedTasks, setViewedTasks] = useState<DailyTask[]>([]);
+  const [viewedHabits, setViewedHabits] = useState<Habit[]>([]);
+  const [viewedExpenses, setViewedExpenses] = useState<Expense[]>([]);
+  const [viewedCalendarEvents, setViewedCalendarEvents] = useState<CalendarEvent[]>([]);
+
+  const myViewerIdsRef = useRef<string[]>([]);
+  const myViewerNamesRef = useRef<Record<string, string>>({});
+  const myExpenseCategoriesRef = useRef<ExpenseCategory[]>(myExpenseCategories);
+  const myBudgetLimitsRef = useRef<BudgetLimits>(myBudgetLimits);
+
+  useEffect(() => {
+    myViewerIdsRef.current = myViewerIds;
+  }, [myViewerIds]);
+
+  useEffect(() => {
+    myViewerNamesRef.current = myViewerNames;
+  }, [myViewerNames]);
+
+  useEffect(() => {
+    myExpenseCategoriesRef.current = myExpenseCategories;
+  }, [myExpenseCategories]);
+
+  useEffect(() => {
+    myBudgetLimitsRef.current = myBudgetLimits;
+  }, [myBudgetLimits]);
+
   const [widgets, setWidgets] = useState<WidgetConfig[]>(initial.widgets);
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(
     initial.notificationPrefs
@@ -311,6 +376,39 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const effectiveOnline = browserOnline && !simulatedOffline;
   const prevOnlineRef = useRef(effectiveOnline);
   const pendingCloudActionsRef = useRef<(() => Promise<void>)[]>([]);
+  const processingInvitesRef = useRef<Set<string>>(new Set());
+
+  const viewedProfile = useMemo(
+    () =>
+      viewingAccountId
+        ? connectedAccounts.find((acc) => acc.ownerId === viewingAccountId) || null
+        : null,
+    [connectedAccounts, viewingAccountId]
+  );
+
+  const isReadOnlyView = Boolean(viewingAccountId && viewedProfile);
+  const viewingAccountName = viewedProfile?.displayName || null;
+
+  const setViewingAccountId = useCallback((accountId: string | null) => {
+    setViewingAccountIdState(accountId);
+  }, []);
+
+  // Auto-reset to own account if access was revoked or user signed out
+  useEffect(() => {
+    if (!viewingAccountId) return;
+    if (!user) {
+      setViewingAccountIdState(null);
+      return;
+    }
+    const stillConnected = connectedAccounts.some((acc) => acc.ownerId === viewingAccountId);
+    if (!stillConnected) {
+      setViewingAccountIdState(null);
+      setViewedTasks([]);
+      setViewedHabits([]);
+      setViewedExpenses([]);
+      setViewedCalendarEvents([]);
+    }
+  }, [viewingAccountId, connectedAccounts, user]);
 
   // Sync HTML class for Tailwind v4 dark mode
   useEffect(() => {
@@ -322,16 +420,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [theme]);
 
-  // Persist workspace locally for seamless offline-first continuity
+  // Persist owner's own workspace locally for offline-first continuity
   useEffect(() => {
     const payload: PersistedWorkspace = {
-      tasks,
-      habits,
-      expenses,
-      expenseCategories,
-      budgetLimits,
-      boards,
-      calendarEvents,
+      tasks: myTasks,
+      habits: myHabits,
+      expenses: myExpenses,
+      expenseCategories: myExpenseCategories,
+      budgetLimits: myBudgetLimits,
+      calendarEvents: myCalendarEvents,
       widgets,
       notificationPrefs,
       notifications,
@@ -346,13 +443,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Ignore storage quota issues
     }
   }, [
-    tasks,
-    habits,
-    expenses,
-    expenseCategories,
-    budgetLimits,
-    boards,
-    calendarEvents,
+    myTasks,
+    myHabits,
+    myExpenses,
+    myExpenseCategories,
+    myBudgetLimits,
+    myCalendarEvents,
     widgets,
     notificationPrefs,
     notifications,
@@ -385,26 +481,150 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthReady(true);
+      if (!firebaseUser) {
+        setViewingAccountIdState(null);
+        setConnectedAccounts([]);
+        setMyViewerIds([]);
+        setMyViewerNames({});
+        setActiveInvite(null);
+        setViewedTasks([]);
+        setViewedHabits([]);
+        setViewedExpenses([]);
+        setViewedCalendarEvents([]);
+      }
     });
     return () => unsub();
   }, []);
 
-  // Real-time Firestore listeners for ALL collections when authenticated with Google
+  // Helper: propagate updated viewerIds onto all owner-owned Firestore docs so read-only access stays 100% consistent
+  const syncViewerListToOwnedDocs = useCallback(
+    async (ownerUid: string, nextViewerIds: string[]) => {
+      const boundedViewers = Array.from(new Set(nextViewerIds.filter((id) => id && id !== ownerUid))).slice(
+        0,
+        MAX_CONNECTED_VIEWERS
+      );
+      const boundedParticipants = Array.from(new Set([ownerUid, ...boundedViewers])).slice(
+        0,
+        MAX_CONNECTED_VIEWERS
+      );
+
+      const tasksQuery = query(collection(db, `users/${ownerUid}/tasks`), where('ownerId', '==', ownerUid));
+      const habitsQuery = query(collection(db, `users/${ownerUid}/habits`), where('ownerId', '==', ownerUid));
+      const expensesQuery = query(
+        collection(db, `users/${ownerUid}/expenses`),
+        where('ownerId', '==', ownerUid)
+      );
+      const eventsQuery = query(collection(db, 'calendarEvents'), where('ownerId', '==', ownerUid));
+
+      const [taskSnap, habitSnap, expenseSnap, eventSnap] = await Promise.all([
+        getDocs(tasksQuery),
+        getDocs(habitsQuery),
+        getDocs(expensesQuery),
+        getDocs(eventsQuery),
+      ]);
+
+      await Promise.allSettled([
+        ...taskSnap.docs.map((d) =>
+          updateDoc(doc(db, 'users', ownerUid, 'tasks', d.id), {
+            viewerIds: boundedViewers,
+            updatedAt: serverTimestamp(),
+          })
+        ),
+        ...habitSnap.docs.map((d) =>
+          updateDoc(doc(db, 'users', ownerUid, 'habits', d.id), {
+            viewerIds: boundedViewers,
+            updatedAt: serverTimestamp(),
+          })
+        ),
+        ...expenseSnap.docs.map((d) =>
+          updateDoc(doc(db, 'users', ownerUid, 'expenses', d.id), {
+            viewerIds: boundedViewers,
+            updatedAt: serverTimestamp(),
+          })
+        ),
+        ...eventSnap.docs.map((d) =>
+          updateDoc(doc(db, 'calendarEvents', d.id), {
+            participantIds: boundedParticipants,
+            updatedAt: serverTimestamp(),
+          })
+        ),
+      ]);
+    },
+    []
+  );
+
+  // Helper: grant a connected family member strict read-only access to the current user's account
+  const grantViewerAccess = useCallback(
+    async (ownerUser: User, viewerUid: string, viewerName: string) => {
+      const uid = ownerUser.uid;
+      const sharedRef = doc(db, 'sharedProfiles', uid);
+      const snap = await getDoc(sharedRef);
+
+      const existingIds: string[] =
+        snap.exists() && Array.isArray(snap.data().viewerIds)
+          ? snap.data().viewerIds.filter((v: unknown): v is string => typeof v === 'string')
+          : myViewerIdsRef.current;
+      const existingNames: Record<string, string> = snap.exists()
+        ? cleanViewerNamesMap(snap.data().viewerNames)
+        : myViewerNamesRef.current;
+
+      const { viewerIds, viewerNames, changed } = addViewerToAccessList(
+        existingIds,
+        existingNames,
+        viewerUid,
+        viewerName,
+        uid
+      );
+
+      if (!changed) return;
+
+      const displayName = sanitizeDisplayName(ownerUser.displayName, 'Workspace User');
+      const boundedCats = myExpenseCategoriesRef.current.slice(0, MAX_EXPENSE_CATEGORIES);
+      const boundedLimits = cleanBudgetLimitsMap(myBudgetLimitsRef.current);
+
+      if (!snap.exists()) {
+        await setDoc(sharedRef, {
+          ownerId: uid,
+          displayName,
+          expenseCategories: boundedCats,
+          budgetLimits: boundedLimits,
+          viewerIds,
+          viewerNames,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(sharedRef, {
+          displayName,
+          viewerIds,
+          viewerNames,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      setMyViewerIds(viewerIds);
+      setMyViewerNames(viewerNames);
+      await syncViewerListToOwnedDocs(uid, viewerIds);
+    },
+    [syncViewerListToOwnedDocs]
+  );
+
+  // Real-time Firestore listeners for owner's own workspace & family connections
   useEffect(() => {
     if (!authReady || !user) return;
 
     const uid = user.uid;
+    const displayName = sanitizeDisplayName(user.displayName, 'Workspace User');
     const unsubs: (() => void)[] = [];
-    const boardSubUnsubs = new Map<string, () => void>();
 
-    // Ensure profile document exists using strict create vs update (preserving immutable createdAt)
+    // Ensure private user profile document exists
     const profileRef = doc(db, 'users', uid);
     void getDoc(profileRef)
       .then(async (snap) => {
         if (!snap.exists()) {
           await setDoc(profileRef, {
             uid,
-            displayName: (user.displayName || 'Workspace User').slice(0, 80),
+            displayName,
             ...(user.email ? { email: user.email.slice(0, 160) } : {}),
             eveningCutoffHour: notificationPrefs.eveningCutoffHour,
             biometricEnabled: vaultLockEnabled,
@@ -414,7 +634,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           });
         } else {
           await updateDoc(profileRef, {
-            displayName: (user.displayName || 'Workspace User').slice(0, 80),
+            displayName,
             ...(user.email ? { email: user.email.slice(0, 160) } : {}),
             eveningCutoffHour: notificationPrefs.eveningCutoffHour,
             biometricEnabled: vaultLockEnabled,
@@ -427,7 +647,35 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
       });
 
-    // Sync per-user profile settings (including custom expense categories & budget caps)
+    // Ensure non-PII split shared profile document exists (preserves existing viewers!)
+    const sharedProfileRef = doc(db, 'sharedProfiles', uid);
+    void getDoc(sharedProfileRef)
+      .then(async (snap) => {
+        const boundedCats = myExpenseCategoriesRef.current.slice(0, MAX_EXPENSE_CATEGORIES);
+        const boundedLimits = cleanBudgetLimitsMap(myBudgetLimitsRef.current);
+        if (!snap.exists()) {
+          await setDoc(sharedProfileRef, {
+            ownerId: uid,
+            displayName,
+            expenseCategories: boundedCats,
+            budgetLimits: boundedLimits,
+            viewerIds: [],
+            viewerNames: {},
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(sharedProfileRef, {
+            displayName,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.WRITE, `sharedProfiles/${uid}`);
+      });
+
+    // Listen to private user profile (categories & budget limits)
     unsubs.push(
       onSnapshot(
         profileRef,
@@ -438,25 +686,117 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const remoteCats = normalizeExpenseCategories(
               data.expenseCategories.filter((c: unknown): c is string => typeof c === 'string')
             );
-            setExpenseCategories(remoteCats);
+            setMyExpenseCategories(remoteCats);
           }
           if (data.budgetLimits && typeof data.budgetLimits === 'object') {
-            const cleaned: BudgetLimits = {};
-            Object.entries(data.budgetLimits as Record<string, unknown>).forEach(([k, v]) => {
-              const key = sanitizeCategoryName(k);
-              const num = Number(v);
-              if (key && Number.isFinite(num) && num >= 0) {
-                cleaned[key] = Math.round(num);
-              }
-            });
-            setBudgetLimits(cleaned);
+            setMyBudgetLimits(cleanBudgetLimitsMap(data.budgetLimits));
           }
         },
         (err) => handleFirestoreError(err, OperationType.GET, `users/${uid}`)
       )
     );
 
-    // 1. Personal Tasks listener
+    // Listen to my own shared profile (who has read-only access to my account)
+    unsubs.push(
+      onSnapshot(
+        sharedProfileRef,
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          const ids = Array.isArray(data.viewerIds)
+            ? data.viewerIds.filter((v: unknown): v is string => typeof v === 'string')
+            : [];
+          const names = cleanViewerNamesMap(data.viewerNames);
+          setMyViewerIds(ids);
+          setMyViewerNames(names);
+        },
+        (err) => handleFirestoreError(err, OperationType.GET, `sharedProfiles/${uid}`)
+      )
+    );
+
+    // Listen to connected family accounts that granted ME read-only access
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, 'sharedProfiles'), where('viewerIds', 'array-contains', uid)),
+        (snap) => {
+          const accounts: SharedAccountProfile[] = snap.docs
+            .filter((d) => d.id !== uid)
+            .map((d) => {
+              const data = d.data();
+              const rawCats = Array.isArray(data.expenseCategories)
+                ? data.expenseCategories.filter((c: unknown): c is string => typeof c === 'string')
+                : [];
+              return {
+                ownerId: String(data.ownerId || d.id),
+                displayName: sanitizeDisplayName(data.displayName, 'Family Account'),
+                expenseCategories: normalizeExpenseCategories(
+                  rawCats.length > 0 ? rawCats : DEFAULT_EXPENSE_CATEGORIES
+                ),
+                budgetLimits: cleanBudgetLimitsMap(data.budgetLimits),
+                viewerIds: Array.isArray(data.viewerIds) ? data.viewerIds : [],
+                viewerNames: cleanViewerNamesMap(data.viewerNames),
+                updatedAt: new Date().toISOString(),
+              };
+            });
+          setConnectedAccounts(accounts);
+          setLastSyncedAt(new Date().toISOString());
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'sharedProfiles')
+      )
+    );
+
+    // Listen to my created share invites -> automatically complete mutual read-only link when accepted
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, 'shareInvites'), where('creatorId', '==', uid)),
+        (snap) => {
+          let openInvite: ShareInvite | null = null;
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            const status = data.status === 'accepted' ? 'accepted' : 'open';
+            const code = String(data.code || d.id);
+            if (status === 'open' && !openInvite) {
+              openInvite = {
+                code,
+                creatorId: String(data.creatorId || uid),
+                creatorName: sanitizeDisplayName(data.creatorName, displayName),
+                status: 'open',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+            }
+            if (
+              status === 'accepted' &&
+              typeof data.acceptedByUid === 'string' &&
+              data.acceptedByUid !== uid
+            ) {
+              const acceptedUid = data.acceptedByUid;
+              const acceptedName = sanitizeDisplayName(data.acceptedByName, 'Family Member');
+              if (!processingInvitesRef.current.has(code)) {
+                processingInvitesRef.current.add(code);
+                void grantViewerAccess(user, acceptedUid, acceptedName)
+                  .then(async () => {
+                    await deleteDoc(doc(db, 'shareInvites', code));
+                    pushAlert(
+                      'Family Account Linked',
+                      `${acceptedName} connected with your share code. You can now view each other's accounts in read-only mode.`,
+                      'family'
+                    );
+                  })
+                  .catch((err) => {
+                    processingInvitesRef.current.delete(code);
+                    handleFirestoreError(err, OperationType.UPDATE, `shareInvites/${code}`);
+                  });
+              }
+            }
+          });
+          setActiveInvite(openInvite);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'shareInvites')
+      )
+    );
+
+    // 1. Owner's Personal Tasks listener
     const tasksPath = `users/${uid}/tasks`;
     unsubs.push(
       onSnapshot(
@@ -480,14 +820,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               updatedAt: new Date().toISOString(),
             };
           });
-          setTasks(remoteTasks);
+          setMyTasks(remoteTasks);
           setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, tasksPath)
       )
     );
 
-    // 2. Personal Habits listener
+    // 2. Owner's Personal Habits listener
     const habitsPath = `users/${uid}/habits`;
     unsubs.push(
       onSnapshot(
@@ -513,14 +853,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               updatedAt: new Date().toISOString(),
             };
           });
-          setHabits(remoteHabits);
+          setMyHabits(remoteHabits);
           setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, habitsPath)
       )
     );
 
-    // 3. Personal Expenses listener
+    // 3. Owner's Personal Expenses listener
     const expensesPath = `users/${uid}/expenses`;
     unsubs.push(
       onSnapshot(
@@ -540,129 +880,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               updatedAt: new Date().toISOString(),
             };
           });
-          setExpenses(remoteExpenses);
+          setMyExpenses(remoteExpenses);
           setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, expensesPath)
       )
     );
 
-    // 4. Shared Team Boards + subcollections listener
-    const boardsPath = 'boards';
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, boardsPath), where('memberIds', 'array-contains', uid)),
-        (snap) => {
-          const activeIds = new Set<string>(snap.docs.map((d) => d.id));
-          const selfMember = createTeamMember(user.displayName || 'You', uid, 'Owner');
-
-          setBoards((prev) => {
-            const prevById = new Map(prev.map((b) => [b.id, b]));
-            return snap.docs.map((bDoc) => {
-              const bData = bDoc.data();
-              const bId = bDoc.id;
-              const existingBoard = prevById.get(bId);
-              const memberIds: string[] = Array.isArray(bData.memberIds) ? bData.memberIds : [uid];
-              const members =
-                existingBoard && existingBoard.members.length > 0
-                  ? existingBoard.members
-                  : memberIds.map((mId) =>
-                      mId === uid
-                        ? selfMember
-                        : createTeamMember(`Member ${mId.slice(0, 6)}`, mId, 'Collaborator')
-                    );
-              return {
-                id: bId,
-                name: String(bData.name || 'Shared Board'),
-                description: String(bData.description || ''),
-                ownerId: String(bData.ownerId || uid),
-                memberIds,
-                members,
-                items: existingBoard?.items || [],
-                comments: existingBoard?.comments || [],
-                updatedAt: new Date().toISOString(),
-              };
-            });
-          });
-
-          snap.docs.forEach((bDoc) => {
-            const bId = bDoc.id;
-            if (!boardSubUnsubs.has(bId)) {
-              const itemsPath = `boards/${bId}/items`;
-              const unsubItems = onSnapshot(
-                query(
-                  collection(db, itemsPath),
-                  where('boardId', '==', bId),
-                  where('memberIds', 'array-contains', uid)
-                ),
-                (itemSnap) => {
-                  const items: BoardItem[] = itemSnap.docs.map((docSnap) => {
-                    const d = docSnap.data();
-                    return {
-                      id: docSnap.id,
-                      boardId: bId,
-                      creatorId: String(d.creatorId || uid),
-                      title: String(d.title || ''),
-                      status: (d.status || 'backlog') as BoardStatus,
-                      priority: (d.priority || 'medium') as TaskPriority,
-                      assigneeName: String(d.assigneeName || 'You'),
-                      dueDate: String(d.dueDate || todayISO),
-                      updatedAt: new Date().toISOString(),
-                    };
-                  });
-                  setBoards((prev) => prev.map((b) => (b.id === bId ? { ...b, items } : b)));
-                },
-                (err) => handleFirestoreError(err, OperationType.LIST, itemsPath)
-              );
-
-              const commentsPath = `boards/${bId}/comments`;
-              const unsubComments = onSnapshot(
-                query(
-                  collection(db, commentsPath),
-                  where('boardId', '==', bId),
-                  where('memberIds', 'array-contains', uid)
-                ),
-                (commSnap) => {
-                  const comments: BoardComment[] = commSnap.docs.map((docSnap) => {
-                    const d = docSnap.data();
-                    return {
-                      id: docSnap.id,
-                      boardId: bId,
-                      authorId: String(d.authorId || uid),
-                      authorName: String(d.authorName || 'Member'),
-                      body: String(d.body || ''),
-                      createdAt: new Date().toISOString(),
-                    };
-                  });
-                  setBoards((prev) => prev.map((b) => (b.id === bId ? { ...b, comments } : b)));
-                },
-                (err) => handleFirestoreError(err, OperationType.LIST, commentsPath)
-              );
-
-              boardSubUnsubs.set(bId, () => {
-                unsubItems();
-                unsubComments();
-              });
-            }
-          });
-
-          boardSubUnsubs.forEach((cleanup, bId) => {
-            if (!activeIds.has(bId)) {
-              cleanup();
-              boardSubUnsubs.delete(bId);
-            }
-          });
-          setLastSyncedAt(new Date().toISOString());
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, boardsPath)
-      )
-    );
-
-    // 5. Integrated Calendar Events listener
+    // 4. Owner's Integrated Calendar Events listener (strictly own events)
     const calPath = 'calendarEvents';
     unsubs.push(
       onSnapshot(
-        query(collection(db, calPath), where('participantIds', 'array-contains', uid)),
+        query(collection(db, calPath), where('ownerId', '==', uid)),
         (snap) => {
           const remoteEvents: CalendarEvent[] = snap.docs.map((d) => {
             const data = d.data();
@@ -679,7 +908,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               participants: ['You'],
             };
           });
-          setCalendarEvents(remoteEvents);
+          setMyCalendarEvents(remoteEvents);
           setLastSyncedAt(new Date().toISOString());
         },
         (err) => handleFirestoreError(err, OperationType.LIST, calPath)
@@ -688,9 +917,155 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     return () => {
       unsubs.forEach((fn) => fn());
-      boardSubUnsubs.forEach((fn) => fn());
     };
-  }, [authReady, user, todayISO, notificationPrefs.eveningCutoffHour, theme, vaultLockEnabled]);
+  }, [
+    authReady,
+    user,
+    todayISO,
+    notificationPrefs.eveningCutoffHour,
+    theme,
+    vaultLockEnabled,
+    grantViewerAccess,
+    pushAlert,
+  ]);
+
+  // Real-time READ-ONLY Firestore listeners when viewing a connected family member's account
+  useEffect(() => {
+    if (!authReady || !user || !viewingAccountId) {
+      setViewedTasks([]);
+      setViewedHabits([]);
+      setViewedExpenses([]);
+      setViewedCalendarEvents([]);
+      return;
+    }
+
+    const myUid = user.uid;
+    const targetUid = viewingAccountId;
+    const unsubs: (() => void)[] = [];
+
+    const tasksPath = `users/${targetUid}/tasks`;
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, tasksPath), where('viewerIds', 'array-contains', myUid)),
+        (snap) => {
+          setViewedTasks(
+            snap.docs.map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                ownerId: String(data.ownerId || targetUid),
+                title: String(data.title || ''),
+                notes: data.notes ? String(data.notes) : undefined,
+                category: String(data.category || 'General'),
+                priority: (data.priority || 'medium') as TaskPriority,
+                status: (data.status || 'todo') as TaskStatus,
+                dueDate: String(data.dueDate || todayISO),
+                dueTime: data.dueTime ? String(data.dueTime) : undefined,
+                assignedBeforeNight: Boolean(data.assignedBeforeNight),
+                reminderEnabled: Boolean(data.reminderEnabled),
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+            })
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, tasksPath)
+      )
+    );
+
+    const habitsPath = `users/${targetUid}/habits`;
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, habitsPath), where('viewerIds', 'array-contains', myUid)),
+        (snap) => {
+          setViewedHabits(
+            snap.docs.map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                ownerId: String(data.ownerId || targetUid),
+                name: String(data.name || ''),
+                category: String(data.category || 'Focus'),
+                reminderTime: String(data.reminderTime || '08:00'),
+                completedDates: Array.isArray(data.completedDates) ? data.completedDates : [],
+                graceDates: Array.isArray(data.graceDates) ? data.graceDates : [],
+                graceTokensRemaining:
+                  typeof data.graceTokensRemaining === 'number' ? data.graceTokensRemaining : 2,
+                isPaused: Boolean(data.isPaused),
+                pauseReason: data.pauseReason ? String(data.pauseReason) : undefined,
+                pausedSince: data.pausedSince ? String(data.pausedSince) : undefined,
+                claimedMilestones: Array.isArray(data.claimedMilestones)
+                  ? data.claimedMilestones
+                  : [],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+            })
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, habitsPath)
+      )
+    );
+
+    const expensesPath = `users/${targetUid}/expenses`;
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, expensesPath), where('viewerIds', 'array-contains', myUid)),
+        (snap) => {
+          setViewedExpenses(
+            snap.docs.map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                ownerId: String(data.ownerId || targetUid),
+                title: String(data.title || ''),
+                category: (data.category || 'Food') as ExpenseCategory,
+                amount: Number(data.amount || 0),
+                date: String(data.date || todayISO),
+                note: data.note ? String(data.note) : undefined,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+            })
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, expensesPath)
+      )
+    );
+
+    const calPath = 'calendarEvents';
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, calPath), where('participantIds', 'array-contains', myUid)),
+        (snap) => {
+          setViewedCalendarEvents(
+            snap.docs
+              .filter((d) => d.data().ownerId === targetUid)
+              .map((d) => {
+                const data = d.data();
+                return {
+                  id: d.id,
+                  ownerId: String(data.ownerId || targetUid),
+                  title: String(data.title || ''),
+                  eventType: (data.eventType || 'meeting') as CalendarEventType,
+                  date: String(data.date || todayISO),
+                  startTime: String(data.startTime || '09:00'),
+                  endTime: data.endTime ? String(data.endTime) : undefined,
+                  urgent: Boolean(data.urgent),
+                  reminderMinutes: Number(data.reminderMinutes ?? 15),
+                  participants: [viewingAccountName || 'Family Member'],
+                };
+              })
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, calPath)
+      )
+    );
+
+    return () => {
+      unsubs.forEach((fn) => fn());
+    };
+  }, [authReady, user, viewingAccountId, todayISO, viewingAccountName]);
 
   const queueOrSync = useCallback(
     (item: Omit<SyncQueueItem, 'id' | 'queuedAt'>, cloudAction?: () => Promise<void>) => {
@@ -738,7 +1113,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }, [effectiveOnline, syncQueue.length, user, pushAlert]);
 
-  // Automatically flush queued offline writes when connectivity is restored
   useEffect(() => {
     if (!prevOnlineRef.current && effectiveOnline && syncQueue.length > 0) {
       flushSyncQueue();
@@ -757,8 +1131,151 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [pushAlert]);
 
   const signOutUser = useCallback(async () => {
+    setViewingAccountIdState(null);
     await signOut(auth);
   }, []);
+
+  // --- Family Sharing Actions ---
+  const createShareInvite = useCallback(async (): Promise<{
+    ok: boolean;
+    code?: string;
+    error?: string;
+  }> => {
+    if (!user) {
+      return { ok: false, error: 'Sign in with Google first to generate a family share code.' };
+    }
+    if (!effectiveOnline) {
+      return { ok: false, error: 'Connect to the internet to generate a live share code.' };
+    }
+
+    try {
+      if (activeInvite) {
+        await deleteDoc(doc(db, 'shareInvites', activeInvite.code)).catch(() => {});
+      }
+
+      const code = generateShareInviteCode(6);
+      const creatorName = sanitizeDisplayName(user.displayName, 'Workspace User');
+      await setDoc(doc(db, 'shareInvites', code), {
+        code,
+        creatorId: user.uid,
+        creatorName,
+        status: 'open',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      return { ok: true, code };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'shareInvites');
+      return { ok: false, error: 'Could not generate a share code right now. Please try again.' };
+    }
+  }, [user, effectiveOnline, activeInvite]);
+
+  const cancelShareInvite = useCallback(async () => {
+    if (!user || !activeInvite) return;
+    try {
+      await deleteDoc(doc(db, 'shareInvites', activeInvite.code));
+      setActiveInvite(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `shareInvites/${activeInvite.code}`);
+    }
+  }, [user, activeInvite]);
+
+  const connectWithInviteCode = useCallback(
+    async (
+      rawCode: string
+    ): Promise<{ ok: boolean; connectedName?: string; error?: string }> => {
+      if (!user) {
+        return { ok: false, error: 'Sign in with Google first to link with a family account.' };
+      }
+      if (!effectiveOnline) {
+        return { ok: false, error: 'Connect to the internet to link accounts.' };
+      }
+
+      const code = normalizeShareInviteCode(rawCode);
+      if (!isValidShareInviteCode(code)) {
+        return { ok: false, error: 'Enter a valid 6-character share code.' };
+      }
+
+      const inviteRef = doc(db, 'shareInvites', code);
+      try {
+        const snap = await getDoc(inviteRef);
+        if (!snap.exists()) {
+          return {
+            ok: false,
+            error: 'Share code not found or already used. Ask the other person to generate a fresh code.',
+          };
+        }
+
+        const data = snap.data();
+        if (data.status !== 'open') {
+          return { ok: false, error: 'This share code has already been used.' };
+        }
+        if (data.creatorId === user.uid) {
+          return {
+            ok: false,
+            error: 'You cannot enter your own share code. Share it with your sister or family member on their phone.',
+          };
+        }
+
+        const creatorUid = String(data.creatorId);
+        const creatorName = sanitizeDisplayName(data.creatorName, 'Family Account');
+        const myName = sanitizeDisplayName(user.displayName, 'Workspace User');
+
+        // 1. Mark invite accepted so creator's device automatically grants us read-only access
+        await updateDoc(inviteRef, {
+          status: 'accepted',
+          acceptedByUid: user.uid,
+          acceptedByName: myName,
+          updatedAt: serverTimestamp(),
+        });
+
+        // 2. Immediately grant the invite creator read-only access to our own account
+        await grantViewerAccess(user, creatorUid, creatorName);
+
+        pushAlert(
+          'Connected for Read-Only Viewing',
+          `You linked with ${creatorName}. Once their app syncs, both of you can view each other's tasks, habits, calendar, and expenses (read-only).`,
+          'family'
+        );
+
+        return { ok: true, connectedName: creatorName };
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `shareInvites/${code}`);
+        return {
+          ok: false,
+          error: 'Could not link with that code. Verify the code and make sure both accounts are signed in with Google.',
+        };
+      }
+    },
+    [user, effectiveOnline, grantViewerAccess, pushAlert]
+  );
+
+  const revokeViewerAccess = useCallback(
+    async (viewerUid: string) => {
+      if (!user) return;
+      const uid = user.uid;
+      const { viewerIds, viewerNames } = removeViewerFromAccessList(
+        myViewerIdsRef.current,
+        myViewerNamesRef.current,
+        viewerUid
+      );
+      setMyViewerIds(viewerIds);
+      setMyViewerNames(viewerNames);
+
+      try {
+        await updateDoc(doc(db, 'sharedProfiles', uid), {
+          viewerIds,
+          viewerNames,
+          updatedAt: serverTimestamp(),
+        });
+        await syncViewerListToOwnedDocs(uid, viewerIds);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `sharedProfiles/${uid}`);
+      }
+    },
+    [user, syncViewerListToOwnedDocs]
+  );
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -777,7 +1294,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsVaultLocked(false);
   }, []);
 
-  // --- Task Actions ---
+  // --- Task Actions (strictly disabled in read-only view) ---
   const addTask = useCallback(
     (input: {
       title: string;
@@ -788,6 +1305,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       dueTime?: string;
       reminderEnabled: boolean;
     }) => {
+      if (isReadOnlyView) return;
       const now = new Date();
       const id = makeId('task');
       const ownerId = user?.uid || 'local-user';
@@ -809,7 +1327,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updatedAt: now.toISOString(),
       };
 
-      setTasks((prev) => [newTask, ...prev]);
+      setMyTasks((prev) => [newTask, ...prev]);
 
       if (input.priority === 'urgent' && notificationPrefs.urgentDeadlines) {
         pushAlert(
@@ -827,6 +1345,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               try {
                 await setDoc(doc(db, 'users', user.uid, 'tasks', id), {
                   ownerId: user.uid,
+                  viewerIds: myViewerIdsRef.current.slice(0, MAX_CONNECTED_VIEWERS),
                   title: newTask.title,
                   ...(newTask.notes ? { notes: newTask.notes } : {}),
                   category: newTask.category,
@@ -846,12 +1365,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, notificationPrefs.eveningCutoffHour, notificationPrefs.urgentDeadlines, pushAlert, queueOrSync]
+    [
+      isReadOnlyView,
+      user,
+      notificationPrefs.eveningCutoffHour,
+      notificationPrefs.urgentDeadlines,
+      pushAlert,
+      queueOrSync,
+    ]
   );
 
   const updateTaskStatus = useCallback(
     (id: string, status: TaskStatus) => {
-      setTasks((prev) =>
+      if (isReadOnlyView) return;
+      setMyTasks((prev) =>
         prev.map((t) => (t.id === id ? { ...t, status, updatedAt: new Date().toISOString() } : t))
       );
       queueOrSync(
@@ -871,21 +1398,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
   const toggleTaskStatus = useCallback(
     (id: string) => {
-      const current = tasks.find((t) => t.id === id);
+      if (isReadOnlyView) return;
+      const current = myTasks.find((t) => t.id === id);
       const nextStatus: TaskStatus = current?.status === 'done' ? 'todo' : 'done';
       updateTaskStatus(id, nextStatus);
     },
-    [tasks, updateTaskStatus]
+    [isReadOnlyView, myTasks, updateTaskStatus]
   );
 
   const deleteTask = useCallback(
     (id: string) => {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
+      if (isReadOnlyView) return;
+      setMyTasks((prev) => prev.filter((t) => t.id !== id));
       queueOrSync(
         { entity: 'task', action: 'delete', label: 'Remove task' },
         user
@@ -900,12 +1429,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
-  // --- Gamified Habit Actions ---
+  // --- Gamified Habit Actions (strictly disabled in read-only view) ---
   const addHabit = useCallback(
     (input: { name: string; category: string; reminderTime: string }) => {
+      if (isReadOnlyView) return;
       const id = makeId('habit');
       const nowISO = new Date().toISOString();
       const newHabit: Habit = {
@@ -922,7 +1452,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createdAt: nowISO,
         updatedAt: nowISO,
       };
-      setHabits((prev) => [newHabit, ...prev]);
+      setMyHabits((prev) => [newHabit, ...prev]);
       queueOrSync(
         { entity: 'habit', action: 'upsert', label: newHabit.name },
         user
@@ -931,6 +1461,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               try {
                 await setDoc(doc(db, 'users', user.uid, 'habits', id), {
                   ownerId: user.uid,
+                  viewerIds: myViewerIdsRef.current.slice(0, MAX_CONNECTED_VIEWERS),
                   name: newHabit.name,
                   category: newHabit.category,
                   reminderTime: newHabit.reminderTime,
@@ -949,12 +1480,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
   const toggleHabitToday = useCallback(
     (id: string) => {
-      const target = habits.find((h) => h.id === id);
+      if (isReadOnlyView) return;
+      const target = myHabits.find((h) => h.id === id);
       if (!target) return;
       const updated = toggleHabitCompletionForDate(target, todayISO);
       const beforeSummary = evaluateHabitStreak(target, todayISO);
@@ -969,7 +1501,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         );
       }
 
-      setHabits((prev) => prev.map((h) => (h.id === id ? updated : h)));
+      setMyHabits((prev) => prev.map((h) => (h.id === id ? updated : h)));
       queueOrSync(
         { entity: 'habit', action: 'upsert', label: 'Habit check-in' },
         user
@@ -988,19 +1520,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [habits, todayISO, pushAlert, user, queueOrSync]
+    [isReadOnlyView, myHabits, todayISO, pushAlert, user, queueOrSync]
   );
 
   const useHabitGracePeriod = useCallback(
     (id: string): { ok: boolean; message: string } => {
-      const target = habits.find((h) => h.id === id);
+      if (isReadOnlyView) return { ok: false, message: 'Read-only view.' };
+      const target = myHabits.find((h) => h.id === id);
       if (!target) return { ok: false, message: 'Habit not found.' };
       const res = applyGracePeriod(target, todayISO);
       if (!res.appliedDate) {
         return { ok: false, message: res.reason || 'Grace shield unavailable.' };
       }
 
-      setHabits((prev) => prev.map((h) => (h.id === id ? res.habit : h)));
+      setMyHabits((prev) => prev.map((h) => (h.id === id ? res.habit : h)));
       queueOrSync(
         { entity: 'habit', action: 'upsert', label: 'Applied grace shield' },
         user
@@ -1023,15 +1556,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         message: `Grace shield applied for ${res.appliedDate}. Your streak is protected.`,
       };
     },
-    [habits, todayISO, user, queueOrSync]
+    [isReadOnlyView, myHabits, todayISO, user, queueOrSync]
   );
 
   const toggleHabitPause = useCallback(
     (id: string, paused: boolean, reason?: string) => {
-      const target = habits.find((h) => h.id === id);
+      if (isReadOnlyView) return;
+      const target = myHabits.find((h) => h.id === id);
       if (!target) return;
       const updated = setHabitPauseState(target, paused, todayISO, reason);
-      setHabits((prev) => prev.map((h) => (h.id === id ? updated : h)));
+      setMyHabits((prev) => prev.map((h) => (h.id === id ? updated : h)));
       queueOrSync(
         {
           entity: 'habit',
@@ -1056,15 +1590,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [habits, todayISO, user, queueOrSync]
+    [isReadOnlyView, myHabits, todayISO, user, queueOrSync]
   );
 
   const claimMilestoneReward = useCallback(
     (habitId: string, milestoneDays: number) => {
-      const target = habits.find((h) => h.id === habitId);
+      if (isReadOnlyView) return;
+      const target = myHabits.find((h) => h.id === habitId);
       if (!target) return;
       const updated = claimHabitMilestone(target, milestoneDays);
-      setHabits((prev) => prev.map((h) => (h.id === habitId ? updated : h)));
+      setMyHabits((prev) => prev.map((h) => (h.id === habitId ? updated : h)));
       queueOrSync(
         {
           entity: 'habit',
@@ -1087,12 +1622,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [habits, user, queueOrSync]
+    [isReadOnlyView, myHabits, user, queueOrSync]
   );
 
   const deleteHabit = useCallback(
     (id: string) => {
-      setHabits((prev) => prev.filter((h) => h.id !== id));
+      if (isReadOnlyView) return;
+      setMyHabits((prev) => prev.filter((h) => h.id !== id));
       queueOrSync(
         { entity: 'habit', action: 'delete', label: 'Deleted habit' },
         user
@@ -1107,9 +1643,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
+  // Sync expense categories & budgets to both private /users/{uid} and non-PII /sharedProfiles/{uid}
   const syncCategoryPreferencesToCloud = useCallback(
     (nextCategories: ExpenseCategory[], nextLimits: BudgetLimits, label: string) => {
       const boundedCats = nextCategories
@@ -1128,15 +1665,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         { entity: 'expense', action: 'upsert', label },
         user
           ? async () => {
-              const path = `users/${user.uid}`;
+              const userPath = `users/${user.uid}`;
+              const sharedPath = `sharedProfiles/${user.uid}`;
               try {
-                await updateDoc(doc(db, 'users', user.uid), {
-                  expenseCategories: boundedCats,
-                  budgetLimits: boundedLimits,
-                  updatedAt: serverTimestamp(),
-                });
+                await Promise.all([
+                  updateDoc(doc(db, 'users', user.uid), {
+                    expenseCategories: boundedCats,
+                    budgetLimits: boundedLimits,
+                    updatedAt: serverTimestamp(),
+                  }),
+                  updateDoc(doc(db, 'sharedProfiles', user.uid), {
+                    expenseCategories: boundedCats,
+                    budgetLimits: boundedLimits,
+                    updatedAt: serverTimestamp(),
+                  }).catch(() => {}),
+                ]);
               } catch (err) {
-                handleFirestoreError(err, OperationType.UPDATE, path);
+                handleFirestoreError(err, OperationType.UPDATE, `${userPath} / ${sharedPath}`);
               }
             }
           : undefined
@@ -1145,7 +1690,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [user, queueOrSync]
   );
 
-  // --- Expense & Budget Actions ---
+  // --- Expense & Budget Actions (strictly disabled in read-only view) ---
   const addExpense = useCallback(
     (input: {
       title: string;
@@ -1154,10 +1699,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       date: string;
       note?: string;
     }) => {
+      if (isReadOnlyView) return;
       const id = makeId('exp');
       const nowISO = new Date().toISOString();
       const cleanCategory =
-        sanitizeCategoryName(input.category) || expenseCategories[0] || 'Food';
+        sanitizeCategoryName(input.category) || myExpenseCategories[0] || 'Food';
       const entry: Expense = {
         id,
         ownerId: user?.uid || 'local-user',
@@ -1169,15 +1715,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createdAt: nowISO,
         updatedAt: nowISO,
       };
-      setExpenses((prev) => [entry, ...prev]);
+      setMyExpenses((prev) => [entry, ...prev]);
 
       if (notificationPrefs.budgetThresholdAlerts) {
         const monthPrefix = input.date.slice(0, 7);
         const currentCategoryTotal =
-          expenses
+          myExpenses
             .filter((e) => e.category === cleanCategory && e.date.startsWith(monthPrefix))
             .reduce((sum, e) => sum + e.amount, 0) + entry.amount;
-        const limit = budgetLimits[cleanCategory];
+        const limit = myBudgetLimits[cleanCategory];
         if (limit > 0 && currentCategoryTotal > limit) {
           pushAlert(
             `${cleanCategory} Budget Exceeded`,
@@ -1195,6 +1741,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               try {
                 await setDoc(doc(db, 'users', user.uid, 'expenses', id), {
                   ownerId: user.uid,
+                  viewerIds: myViewerIdsRef.current.slice(0, MAX_CONNECTED_VIEWERS),
                   title: entry.title,
                   category: entry.category,
                   amount: entry.amount,
@@ -1211,10 +1758,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       );
     },
     [
+      isReadOnlyView,
       user,
-      expenses,
-      expenseCategories,
-      budgetLimits,
+      myExpenses,
+      myExpenseCategories,
+      myBudgetLimits,
       notificationPrefs.budgetThresholdAlerts,
       pushAlert,
       queueOrSync,
@@ -1232,7 +1780,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         note?: string;
       }
     ) => {
-      const target = expenses.find((e) => e.id === id);
+      if (isReadOnlyView) return;
+      const target = myExpenses.find((e) => e.id === id);
       if (!target) return;
 
       const nextTitle =
@@ -1245,7 +1794,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         patch.amount !== undefined && Number.isFinite(patch.amount) && patch.amount > 0
           ? Math.round(patch.amount * 100) / 100
           : target.amount;
-      const nextDate = patch.date !== undefined && patch.date.length === 10 ? patch.date : target.date;
+      const nextDate =
+        patch.date !== undefined && patch.date.length === 10 ? patch.date : target.date;
       const nextNote =
         patch.note !== undefined ? patch.note.trim().slice(0, 240) || undefined : target.note;
 
@@ -1259,7 +1809,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updatedAt: new Date().toISOString(),
       };
 
-      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
+      setMyExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
 
       queueOrSync(
         { entity: 'expense', action: 'upsert', label: `Updated expense ${updated.title}` },
@@ -1282,12 +1832,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [expenses, user, queueOrSync]
+    [isReadOnlyView, myExpenses, user, queueOrSync]
   );
 
   const deleteExpense = useCallback(
     (id: string) => {
-      setExpenses((prev) => prev.filter((e) => e.id !== id));
+      if (isReadOnlyView) return;
+      setMyExpenses((prev) => prev.filter((e) => e.id !== id));
       queueOrSync(
         { entity: 'expense', action: 'delete', label: 'Deleted expense' },
         user
@@ -1302,20 +1853,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
   const updateBudgetLimit = useCallback(
     (category: ExpenseCategory, amount: number) => {
+      if (isReadOnlyView) return;
       const safeAmount = Number.isFinite(amount) ? Math.max(0, Math.round(amount)) : 0;
       const nextLimits: BudgetLimits = {
-        ...budgetLimits,
+        ...myBudgetLimits,
         [category]: safeAmount,
       };
-      setBudgetLimits(nextLimits);
-      syncCategoryPreferencesToCloud(expenseCategories, nextLimits, `Updated ${category} budget`);
+      setMyBudgetLimits(nextLimits);
+      syncCategoryPreferencesToCloud(myExpenseCategories, nextLimits, `Updated ${category} budget`);
     },
-    [budgetLimits, expenseCategories, syncCategoryPreferencesToCloud]
+    [isReadOnlyView, myBudgetLimits, myExpenseCategories, syncCategoryPreferencesToCloud]
   );
 
   const addExpenseCategory = useCallback(
@@ -1323,33 +1875,34 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       name: string,
       monthlyLimit = 0
     ): { ok: boolean; error?: string; category?: ExpenseCategory } => {
+      if (isReadOnlyView) return { ok: false, error: 'Read-only view.' };
       const clean = sanitizeCategoryName(name);
       if (!clean) {
         return { ok: false, error: 'Enter a category name.' };
       }
-      if (expenseCategories.length >= MAX_EXPENSE_CATEGORIES) {
+      if (myExpenseCategories.length >= MAX_EXPENSE_CATEGORIES) {
         return {
           ok: false,
           error: `Maximum of ${MAX_EXPENSE_CATEGORIES} expense categories reached.`,
         };
       }
-      if (expenseCategories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      if (myExpenseCategories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
         return { ok: false, error: `"${clean}" already exists.` };
       }
 
       const safeLimit = Number.isFinite(monthlyLimit) ? Math.max(0, Math.round(monthlyLimit)) : 0;
-      const nextCategories = [...expenseCategories, clean];
+      const nextCategories = [...myExpenseCategories, clean];
       const nextLimits: BudgetLimits = {
-        ...budgetLimits,
+        ...myBudgetLimits,
         [clean]: safeLimit,
       };
 
-      setExpenseCategories(nextCategories);
-      setBudgetLimits(nextLimits);
+      setMyExpenseCategories(nextCategories);
+      setMyBudgetLimits(nextLimits);
       syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Added category ${clean}`);
       return { ok: true, category: clean };
     },
-    [expenseCategories, budgetLimits, syncCategoryPreferencesToCloud]
+    [isReadOnlyView, myExpenseCategories, myBudgetLimits, syncCategoryPreferencesToCloud]
   );
 
   const renameExpenseCategory = useCallback(
@@ -1358,22 +1911,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       newName: string,
       monthlyLimit?: number
     ): { ok: boolean; error?: string; category?: ExpenseCategory } => {
+      if (isReadOnlyView) return { ok: false, error: 'Read-only view.' };
       const cleanNew = sanitizeCategoryName(newName);
       if (!cleanNew) {
         return { ok: false, error: 'Category name cannot be empty.' };
       }
-      if (!expenseCategories.includes(oldName)) {
+      if (!myExpenseCategories.includes(oldName)) {
         return { ok: false, error: 'Category not found.' };
       }
-      const duplicate = expenseCategories.some(
+      const duplicate = myExpenseCategories.some(
         (c) => c !== oldName && c.toLowerCase() === cleanNew.toLowerCase()
       );
       if (duplicate) {
         return { ok: false, error: `"${cleanNew}" already exists.` };
       }
 
-      const nextCategories = expenseCategories.map((c) => (c === oldName ? cleanNew : c));
-      const nextLimits: BudgetLimits = { ...budgetLimits };
+      const nextCategories = myExpenseCategories.map((c) => (c === oldName ? cleanNew : c));
+      const nextLimits: BudgetLimits = { ...myBudgetLimits };
       const existingLimit = nextLimits[oldName] ?? 0;
       if (oldName !== cleanNew) {
         delete nextLimits[oldName];
@@ -1383,15 +1937,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ? Math.max(0, Math.round(monthlyLimit))
           : existingLimit;
 
-      setExpenseCategories(nextCategories);
-      setBudgetLimits(nextLimits);
+      setMyExpenseCategories(nextCategories);
+      setMyBudgetLimits(nextLimits);
       syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Edited category ${cleanNew}`);
 
       if (oldName !== cleanNew) {
-        const affected = expenses.filter((e) => e.category === oldName);
+        const affected = myExpenses.filter((e) => e.category === oldName);
         if (affected.length > 0) {
           const nowISO = new Date().toISOString();
-          setExpenses((prev) =>
+          setMyExpenses((prev) =>
             prev.map((e) =>
               e.category === oldName ? { ...e, category: cleanNew, updatedAt: nowISO } : e
             )
@@ -1425,32 +1979,41 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       return { ok: true, category: cleanNew };
     },
-    [expenseCategories, budgetLimits, expenses, user, queueOrSync, syncCategoryPreferencesToCloud]
+    [
+      isReadOnlyView,
+      myExpenseCategories,
+      myBudgetLimits,
+      myExpenses,
+      user,
+      queueOrSync,
+      syncCategoryPreferencesToCloud,
+    ]
   );
 
   const deleteExpenseCategory = useCallback(
     (name: string, reassignTo?: ExpenseCategory): { ok: boolean; error?: string } => {
-      if (expenseCategories.length <= 1) {
+      if (isReadOnlyView) return { ok: false, error: 'Read-only view.' };
+      if (myExpenseCategories.length <= 1) {
         return { ok: false, error: 'Keep at least one expense category.' };
       }
-      if (!expenseCategories.includes(name)) {
+      if (!myExpenseCategories.includes(name)) {
         return { ok: false, error: 'Category not found.' };
       }
 
-      const nextCategories = expenseCategories.filter((c) => c !== name);
+      const nextCategories = myExpenseCategories.filter((c) => c !== name);
       const fallbackCategory =
         reassignTo && nextCategories.includes(reassignTo) ? reassignTo : nextCategories[0];
-      const nextLimits: BudgetLimits = { ...budgetLimits };
+      const nextLimits: BudgetLimits = { ...myBudgetLimits };
       delete nextLimits[name];
 
-      setExpenseCategories(nextCategories);
-      setBudgetLimits(nextLimits);
+      setMyExpenseCategories(nextCategories);
+      setMyBudgetLimits(nextLimits);
       syncCategoryPreferencesToCloud(nextCategories, nextLimits, `Removed category ${name}`);
 
-      const affected = expenses.filter((e) => e.category === name);
+      const affected = myExpenses.filter((e) => e.category === name);
       if (affected.length > 0) {
         const nowISO = new Date().toISOString();
-        setExpenses((prev) =>
+        setMyExpenses((prev) =>
           prev.map((e) =>
             e.category === name ? { ...e, category: fallbackCategory, updatedAt: nowISO } : e
           )
@@ -1483,245 +2046,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       return { ok: true };
     },
-    [expenseCategories, budgetLimits, expenses, user, queueOrSync, syncCategoryPreferencesToCloud]
+    [
+      isReadOnlyView,
+      myExpenseCategories,
+      myBudgetLimits,
+      myExpenses,
+      user,
+      queueOrSync,
+      syncCategoryPreferencesToCloud,
+    ]
   );
 
-  // --- Shared Board Actions ---
-  const addBoard = useCallback(
-    (name: string, description: string) => {
-      const id = makeId('board');
-      const nowISO = new Date().toISOString();
-      const ownerId = user?.uid || 'local-user';
-      const ownerMember = createTeamMember(user?.displayName || 'You', ownerId, 'Owner');
-      const newBoard: SharedBoard = {
-        id,
-        name: name.trim().slice(0, 80),
-        description: description.trim().slice(0, 240),
-        ownerId,
-        memberIds: [ownerId],
-        members: [ownerMember],
-        items: [],
-        comments: [],
-        updatedAt: nowISO,
-      };
-      setBoards((prev) => [...prev, newBoard]);
-      queueOrSync(
-        { entity: 'boardItem', action: 'upsert', label: `Created board ${newBoard.name}` },
-        user
-          ? async () => {
-              const path = `boards/${id}`;
-              try {
-                await setDoc(doc(db, 'boards', id), {
-                  name: newBoard.name,
-                  ...(newBoard.description ? { description: newBoard.description } : {}),
-                  ownerId: user.uid,
-                  memberIds: [user.uid],
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                });
-              } catch (err) {
-                handleFirestoreError(err, OperationType.CREATE, path);
-              }
-            }
-          : undefined
-      );
-    },
-    [user, queueOrSync]
-  );
-
-  const addBoardMember = useCallback(
-    (boardId: string, name: string, memberUid?: string) => {
-      const cleanName = name.trim().slice(0, 60);
-      if (!cleanName) return;
-      const cleanUid = memberUid?.trim().slice(0, 128);
-      const memberId = cleanUid || makeId('member');
-      const newMember = createTeamMember(cleanName, memberId, 'Collaborator');
-      const targetBoard = boards.find((b) => b.id === boardId);
-      const nextMemberIds = Array.from(
-        new Set([...(targetBoard?.memberIds || []), ...(cleanUid ? [cleanUid] : [])])
-      ).slice(0, 50);
-
-      setBoards((prev) =>
-        prev.map((b) => {
-          if (b.id !== boardId) return b;
-          if (b.members.some((m) => m.id === memberId || m.name.toLowerCase() === cleanName.toLowerCase())) {
-            return b;
-          }
-          return {
-            ...b,
-            memberIds: cleanUid ? Array.from(new Set([...b.memberIds, cleanUid])).slice(0, 50) : b.memberIds,
-            members: [...b.members, newMember],
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
-
-      if (user && cleanUid && targetBoard && targetBoard.ownerId === user.uid) {
-        queueOrSync(
-          { entity: 'boardItem', action: 'upsert', label: `Added ${cleanName} to board` },
-          async () => {
-            const path = `boards/${boardId}`;
-            try {
-              await updateDoc(doc(db, 'boards', boardId), {
-                memberIds: nextMemberIds,
-                updatedAt: serverTimestamp(),
-              });
-            } catch (err) {
-              handleFirestoreError(err, OperationType.UPDATE, path);
-            }
-          }
-        );
-      }
-    },
-    [boards, user, queueOrSync]
-  );
-
-  const addBoardItem = useCallback(
-    (
-      boardId: string,
-      input: { title: string; priority: TaskPriority; assigneeName: string; dueDate: string }
-    ) => {
-      const id = makeId('bi');
-      const nowISO = new Date().toISOString();
-      const board = boards.find((b) => b.id === boardId);
-      const memberIds = board?.memberIds || (user ? [user.uid] : ['local-user']);
-
-      setBoards((prev) =>
-        prev.map((b) => {
-          if (b.id !== boardId) return b;
-          const member = b.members.find((m) => m.name === input.assigneeName);
-          const item: BoardItem = {
-            id,
-            boardId,
-            creatorId: user?.uid || 'local-user',
-            title: input.title.trim().slice(0, 160),
-            status: 'backlog',
-            priority: input.priority,
-            assigneeName: input.assigneeName.slice(0, 60),
-            assigneeAvatar: member?.avatarUrl,
-            dueDate: input.dueDate,
-            updatedAt: nowISO,
-          };
-          return {
-            ...b,
-            items: [item, ...b.items],
-            updatedAt: nowISO,
-          };
-        })
-      );
-
-      queueOrSync(
-        { entity: 'boardItem', action: 'upsert', label: input.title },
-        user && board && board.ownerId !== 'local-user'
-          ? async () => {
-              const path = `boards/${boardId}/items/${id}`;
-              try {
-                await setDoc(doc(db, 'boards', boardId, 'items', id), {
-                  boardId,
-                  creatorId: user.uid,
-                  memberIds,
-                  title: input.title.trim().slice(0, 160),
-                  status: 'backlog',
-                  priority: input.priority,
-                  assigneeName: input.assigneeName.slice(0, 60),
-                  dueDate: input.dueDate,
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                });
-              } catch (err) {
-                handleFirestoreError(err, OperationType.CREATE, path);
-              }
-            }
-          : undefined
-      );
-    },
-    [boards, user, queueOrSync]
-  );
-
-  const moveBoardItemStatus = useCallback(
-    (boardId: string, itemId: string, status: BoardStatus) => {
-      const nowISO = new Date().toISOString();
-      const board = boards.find((b) => b.id === boardId);
-      setBoards((prev) =>
-        prev.map((b) => {
-          if (b.id !== boardId) return b;
-          return {
-            ...b,
-            items: b.items.map((item) =>
-              item.id === itemId ? { ...item, status, updatedAt: nowISO } : item
-            ),
-            updatedAt: nowISO,
-          };
-        })
-      );
-      queueOrSync(
-        { entity: 'boardItem', action: 'upsert', label: `Moved card to ${status}` },
-        user && board && board.ownerId !== 'local-user'
-          ? async () => {
-              const path = `boards/${boardId}/items/${itemId}`;
-              try {
-                await updateDoc(doc(db, 'boards', boardId, 'items', itemId), {
-                  status,
-                  updatedAt: serverTimestamp(),
-                });
-              } catch (err) {
-                handleFirestoreError(err, OperationType.UPDATE, path);
-              }
-            }
-          : undefined
-      );
-    },
-    [boards, user, queueOrSync]
-  );
-
-  const addBoardComment = useCallback(
-    (boardId: string, body: string) => {
-      const trimmed = body.trim().slice(0, 400);
-      if (!trimmed) return;
-      const id = makeId('bc');
-      const nowISO = new Date().toISOString();
-      const authorName = (user?.displayName || 'You').slice(0, 60);
-      const board = boards.find((b) => b.id === boardId);
-      const memberIds = board?.memberIds || (user ? [user.uid] : ['local-user']);
-
-      const comment: BoardComment = {
-        id,
-        boardId,
-        authorId: user?.uid || 'local-user',
-        authorName,
-        body: trimmed,
-        createdAt: nowISO,
-      };
-      setBoards((prev) =>
-        prev.map((b) =>
-          b.id === boardId ? { ...b, comments: [...b.comments, comment], updatedAt: nowISO } : b
-        )
-      );
-      queueOrSync(
-        { entity: 'boardComment', action: 'upsert', label: 'Posted team update' },
-        user && board && board.ownerId !== 'local-user'
-          ? async () => {
-              const path = `boards/${boardId}/comments/${id}`;
-              try {
-                await setDoc(doc(db, 'boards', boardId, 'comments', id), {
-                  boardId,
-                  authorId: user.uid,
-                  memberIds,
-                  authorName,
-                  body: trimmed,
-                  createdAt: serverTimestamp(),
-                });
-              } catch (err) {
-                handleFirestoreError(err, OperationType.CREATE, path);
-              }
-            }
-          : undefined
-      );
-    },
-    [boards, user, queueOrSync]
-  );
-
-  // --- Calendar Actions ---
+  // --- Calendar Actions (strictly disabled in read-only view) ---
   const addCalendarEvent = useCallback(
     (input: {
       title: string;
@@ -1733,6 +2069,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       reminderMinutes: number;
       participants: string[];
     }) => {
+      if (isReadOnlyView) return;
       const id = makeId('ev');
       const ev: CalendarEvent = {
         id,
@@ -1746,7 +2083,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         reminderMinutes: input.reminderMinutes,
         participants: input.participants.length > 0 ? input.participants : ['You'],
       };
-      setCalendarEvents((prev) => [...prev, ev]);
+      setMyCalendarEvents((prev) => [...prev, ev]);
       if (ev.urgent && notificationPrefs.urgentDeadlines) {
         pushAlert(
           'Urgent Calendar Reminder Set',
@@ -1759,10 +2096,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         user
           ? async () => {
               const path = `calendarEvents/${id}`;
+              const participantIds = Array.from(
+                new Set([user.uid, ...myViewerIdsRef.current])
+              ).slice(0, MAX_CONNECTED_VIEWERS);
               try {
                 await setDoc(doc(db, 'calendarEvents', id), {
                   ownerId: user.uid,
-                  participantIds: [user.uid],
+                  participantIds,
                   title: ev.title,
                   eventType: ev.eventType,
                   date: ev.date,
@@ -1780,12 +2120,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, notificationPrefs.urgentDeadlines, pushAlert, queueOrSync]
+    [isReadOnlyView, user, notificationPrefs.urgentDeadlines, pushAlert, queueOrSync]
   );
 
   const deleteCalendarEvent = useCallback(
     (id: string) => {
-      setCalendarEvents((prev) => prev.filter((e) => e.id !== id));
+      if (isReadOnlyView) return;
+      setMyCalendarEvents((prev) => prev.filter((e) => e.id !== id));
       queueOrSync(
         { entity: 'calendarEvent', action: 'delete', label: 'Removed calendar event' },
         user
@@ -1800,7 +2141,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : undefined
       );
     },
-    [user, queueOrSync]
+    [isReadOnlyView, user, queueOrSync]
   );
 
   // --- Widget & Notification Preferences ---
@@ -1839,15 +2180,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const clearWorkspaceData = useCallback(() => {
     pendingCloudActionsRef.current = [];
-    setTasks([]);
-    setHabits([]);
-    setExpenses([]);
-    setBoards([]);
-    setCalendarEvents([]);
+    setMyTasks([]);
+    setMyHabits([]);
+    setMyExpenses([]);
+    setMyCalendarEvents([]);
     setNotifications([]);
     setSyncQueue([]);
-    setExpenseCategories([...DEFAULT_EXPENSE_CATEGORIES]);
-    setBudgetLimits({ ...DEFAULT_BUDGET_LIMITS });
+    setMyExpenseCategories([...DEFAULT_EXPENSE_CATEGORIES]);
+    setMyBudgetLimits({ ...DEFAULT_BUDGET_LIMITS });
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(LEGACY_STORAGE_KEY);
@@ -1855,6 +2195,31 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Ignore storage errors
     }
   }, []);
+
+  // Unified active dataset: switches transparently between My Account (editable) and Connected Account (read-only)
+  const tasks = isReadOnlyView ? viewedTasks : myTasks;
+  const habits = isReadOnlyView ? viewedHabits : myHabits;
+  const expenses = isReadOnlyView ? viewedExpenses : myExpenses;
+  const expenseCategories = useMemo(
+    () =>
+      isReadOnlyView && viewedProfile
+        ? normalizeExpenseCategories(
+            viewedProfile.expenseCategories,
+            viewedProfile.budgetLimits,
+            viewedExpenses
+          )
+        : myExpenseCategories,
+    [isReadOnlyView, viewedProfile, viewedExpenses, myExpenseCategories]
+  );
+  const budgetLimits = useMemo(
+    () => (isReadOnlyView && viewedProfile ? viewedProfile.budgetLimits : myBudgetLimits),
+    [isReadOnlyView, viewedProfile, myBudgetLimits]
+  );
+  const calendarEvents = isReadOnlyView ? viewedCalendarEvents : myCalendarEvents;
+  const myViewers = useMemo(
+    () => buildConnectedViewersList(myViewerIds, myViewerNames),
+    [myViewerIds, myViewerNames]
+  );
 
   const value: WorkspaceContextValue = {
     todayISO,
@@ -1874,6 +2239,17 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     syncQueue,
     lastSyncedAt,
     flushSyncQueue,
+    viewingAccountId,
+    isReadOnlyView,
+    viewingAccountName,
+    setViewingAccountId,
+    connectedAccounts,
+    myViewers,
+    activeInvite,
+    createShareInvite,
+    cancelShareInvite,
+    connectWithInviteCode,
+    revokeViewerAccess,
     theme,
     toggleTheme,
     vaultLockEnabled,
@@ -1903,12 +2279,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     addExpenseCategory,
     renameExpenseCategory,
     deleteExpenseCategory,
-    boards,
-    addBoard,
-    addBoardMember,
-    addBoardItem,
-    moveBoardItemStatus,
-    addBoardComment,
     calendarEvents,
     addCalendarEvent,
     deleteCalendarEvent,

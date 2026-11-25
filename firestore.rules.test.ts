@@ -15,15 +15,14 @@ test('all blueprint collections have explicit match blocks in firestore.rules', 
     'match /tasks/{taskId}',
     'match /habits/{habitId}',
     'match /expenses/{expenseId}',
-    'match /boards/{boardId}',
-    'match /items/{itemId}',
-    'match /comments/{commentId}',
+    'match /sharedProfiles/{profileId}',
+    'match /shareInvites/{inviteCode}',
     'match /calendarEvents/{eventId}',
   ];
   for (const m of expectedMatches) {
     assert.ok(rulesContent.includes(m), `Missing rule block for ${m}`);
   }
-  assert.equal(Object.keys(blueprint.firestore).length, 8);
+  assert.equal(Object.keys(blueprint.firestore).length, 7);
 });
 
 test('PII isolation blocks listing /users and requires email_verified on writes', () => {
@@ -31,10 +30,12 @@ test('PII isolation blocks listing /users and requires email_verified on writes'
   assert.ok(rulesContent.includes('request.auth.token.email_verified == true'));
 });
 
-test('board subcollections enforce Master Gate membership and memberIds list guard', () => {
-  assert.ok(rulesContent.includes('isBoardMember(boardId)'));
-  assert.ok(rulesContent.includes('matchesParentMembers(boardId, incoming().memberIds)'));
-  assert.ok(rulesContent.includes('request.auth.uid in resource.data.memberIds'));
+test('connected family viewers have strictly read-only access and cannot edit owner records', () => {
+  assert.ok(rulesContent.includes('request.auth.uid in resource.data.viewerIds'));
+  assert.ok(rulesContent.includes('match /sharedProfiles/{profileId}'));
+  assert.ok(rulesContent.includes("existing().status == 'open'"));
+  assert.ok(rulesContent.includes("incoming().status == 'accepted'"));
+  assert.ok(rulesContent.includes('existing().creatorId != request.auth.uid'));
 });
 
 test('dirty dozen payload invariants: strict key allowlists and bounded arrays exist', () => {
@@ -43,6 +44,7 @@ test('dirty dozen payload invariants: strict key allowlists and bounded arrays e
   assert.ok(rulesContent.includes('isBoundedIntList(data.claimedMilestones, 10)'));
   assert.ok(rulesContent.includes('isBoundedStringList(data.expenseCategories, 30)'));
   assert.ok(rulesContent.includes('data.budgetLimits is map && data.budgetLimits.size() <= 30'));
+  assert.ok(rulesContent.includes('isBoundedStringList(data.viewerIds, 25)'));
   assert.ok(rulesContent.includes('data.amount is number && data.amount > 0 && data.amount <= 1000000'));
   assert.ok(rulesContent.includes('incoming().createdAt == request.time'));
   assert.ok(rulesContent.includes('incoming().updatedAt == request.time'));

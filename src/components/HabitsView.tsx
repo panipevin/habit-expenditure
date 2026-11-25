@@ -29,6 +29,8 @@ export const HabitsView: React.FC = () => {
     toggleHabitPause,
     claimMilestoneReward,
     deleteHabit,
+    isReadOnlyView,
+    viewingAccountName,
   } = useWorkspace();
 
   const [composerOpen, setComposerOpen] = useState(false);
@@ -93,18 +95,20 @@ export const HabitsView: React.FC = () => {
             Gamified streak engine · 7d, 30d &amp; 100d milestone bonuses · Grace shields &amp; pause protection
           </p>
           <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
-            Habit Streaks
+            {isReadOnlyView && viewingAccountName ? `${viewingAccountName}'s Habit Streaks` : 'Habit Streaks'}
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setComposerOpen((prev) => !prev)}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] transition-colors whitespace-nowrap shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          {composerOpen ? 'Close Form' : 'New Habit'}
-        </button>
+        {!isReadOnlyView && (
+          <button
+            type="button"
+            onClick={() => setComposerOpen((prev) => !prev)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] transition-colors whitespace-nowrap shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            {composerOpen ? 'Close Form' : 'New Habit'}
+          </button>
+        )}
       </div>
 
       {/* Gamified Milestone & Rank Banner */}
@@ -181,7 +185,7 @@ export const HabitsView: React.FC = () => {
       )}
 
       {/* New Habit Composer */}
-      {composerOpen && (
+      {composerOpen && !isReadOnlyView && (
         <form
           onSubmit={handleAddHabit}
           className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 dark:border-[#3B82F6]/40 p-6 space-y-4"
@@ -265,14 +269,16 @@ export const HabitsView: React.FC = () => {
           <p className="max-w-md mx-auto text-xs text-[#556075] dark:text-[#8B97AD] leading-relaxed">
             Build consecutive daily streaks, unlock 7-day, 30-day, and 100-day XP milestone rewards, and protect streaks with Grace Shields or Pause mode.
           </p>
-          <button
-            type="button"
-            onClick={() => setComposerOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB]"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Create Your First Habit
-          </button>
+          {!isReadOnlyView && (
+            <button
+              type="button"
+              onClick={() => setComposerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB]"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Create Your First Habit
+            </button>
+          )}
         </section>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -325,7 +331,7 @@ export const HabitsView: React.FC = () => {
                 </div>
 
                 {/* Unclaimed Milestone Bonus Banner */}
-                {summary.unclaimedMilestones.length > 0 && (
+                {summary.unclaimedMilestones.length > 0 && !isReadOnlyView && (
                   <div className="mt-4 rounded-lg border border-[#D97706]/40 bg-[#FEF3C7]/60 dark:bg-[#78350F]/25 px-4 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-[#92400E] dark:text-[#FBBF24]">
@@ -408,66 +414,68 @@ export const HabitsView: React.FC = () => {
               </div>
 
               {/* Action Footer */}
-              <div className="pt-4 border-t border-[#E2E6ED] dark:border-[#1F2737] flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
+              {!isReadOnlyView && (
+                <div className="pt-4 border-t border-[#E2E6ED] dark:border-[#1F2737] flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      disabled={habit.isPaused}
+                      onClick={() => toggleHabitToday(habit.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap disabled:opacity-40 ${
+                        summary.completedToday
+                          ? 'bg-[#16A34A] text-white hover:bg-[#15803D]'
+                          : 'bg-[#0E1525] dark:bg-[#F1F5F9] text-white dark:text-[#0E1525] hover:opacity-90'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      {summary.completedToday ? 'Completed Today' : 'Check In Today'}
+                    </button>
+
+                    {!habit.isPaused && (
+                      <button
+                        type="button"
+                        onClick={() => handleGrace(habit.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] transition-colors whitespace-nowrap"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-[#1D4ED8] dark:text-[#60A5FA]" />
+                        Grace Shield ({habit.graceTokensRemaining})
+                      </button>
+                    )}
+
+                    {habit.isPaused ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleHabitPause(habit.id, false);
+                          setFeedback(`Resumed "${habit.name}". Prior ${summary.currentStreak}-day streak preserved.`);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#1D4ED8] px-3 py-2 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:bg-[#1D4ED8]/10 transition-colors whitespace-nowrap"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        Resume Habit
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPauseModalHabitId(habit.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-2 text-xs font-medium text-[#556075] dark:text-[#94A3B8] hover:text-[#0E1525] dark:hover:text-[#F1F5F9] transition-colors whitespace-nowrap"
+                      >
+                        <Pause className="w-3.5 h-3.5" />
+                        Pause
+                      </button>
+                    )}
+                  </div>
+
                   <button
                     type="button"
-                    disabled={habit.isPaused}
-                    onClick={() => toggleHabitToday(habit.id)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap disabled:opacity-40 ${
-                      summary.completedToday
-                        ? 'bg-[#16A34A] text-white hover:bg-[#15803D]'
-                        : 'bg-[#0E1525] dark:bg-[#F1F5F9] text-white dark:text-[#0E1525] hover:opacity-90'
-                    }`}
+                    onClick={() => deleteHabit(habit.id)}
+                    aria-label={`Delete habit "${habit.name}"`}
+                    className="p-2 rounded-lg text-[#556075] hover:text-[#DC2626] transition-colors"
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    {summary.completedToday ? 'Completed Today' : 'Check In Today'}
+                    <Trash2 className="w-4 h-4" />
                   </button>
-
-                  {!habit.isPaused && (
-                    <button
-                      type="button"
-                      onClick={() => handleGrace(habit.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] transition-colors whitespace-nowrap"
-                    >
-                      <Shield className="w-3.5 h-3.5 text-[#1D4ED8] dark:text-[#60A5FA]" />
-                      Grace Shield ({habit.graceTokensRemaining})
-                    </button>
-                  )}
-
-                  {habit.isPaused ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        toggleHabitPause(habit.id, false);
-                        setFeedback(`Resumed "${habit.name}". Prior ${summary.currentStreak}-day streak preserved.`);
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#1D4ED8] px-3 py-2 text-xs font-medium text-[#1D4ED8] dark:text-[#60A5FA] hover:bg-[#1D4ED8]/10 transition-colors whitespace-nowrap"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      Resume Habit
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setPauseModalHabitId(habit.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3 py-2 text-xs font-medium text-[#556075] dark:text-[#94A3B8] hover:text-[#0E1525] dark:hover:text-[#F1F5F9] transition-colors whitespace-nowrap"
-                    >
-                      <Pause className="w-3.5 h-3.5" />
-                      Pause
-                    </button>
-                  )}
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => deleteHabit(habit.id)}
-                  aria-label={`Delete habit "${habit.name}"`}
-                  className="p-2 rounded-lg text-[#556075] hover:text-[#DC2626] transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+              )}
             </article>
           );
         })}

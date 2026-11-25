@@ -19,6 +19,8 @@ export const CalendarView: React.FC = () => {
     tasks,
     addCalendarEvent,
     deleteCalendarEvent,
+    isReadOnlyView,
+    viewingAccountName,
   } = useWorkspace();
 
   const initialDate = parseDateISO(todayISO);
@@ -118,21 +120,23 @@ export const CalendarView: React.FC = () => {
             Integrated schedule · Syncs team meetings, personal deadlines &amp; automated reminders
           </p>
           <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
-            Calendar
+            {isReadOnlyView && viewingAccountName ? `${viewingAccountName}'s Calendar` : 'Calendar'}
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setFormOpen((prev) => !prev)}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Schedule Meeting / Deadline
-        </button>
+        {!isReadOnlyView && (
+          <button
+            type="button"
+            onClick={() => setFormOpen((prev) => !prev)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] whitespace-nowrap shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            Schedule Meeting / Deadline
+          </button>
+        )}
       </div>
 
-      {formOpen && (
+      {formOpen && !isReadOnlyView && (
         <form
           onSubmit={handleSchedule}
           className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 p-6 space-y-4"
@@ -359,14 +363,16 @@ export const CalendarView: React.FC = () => {
                         <Bell className="w-3 h-3" /> {ev.reminderMinutes}m alert · {ev.participants.join(', ')}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      aria-label={`Remove "${ev.title}"`}
-                      onClick={() => deleteCalendarEvent(ev.id)}
-                      className="p-1.5 text-[#556075] hover:text-[#DC2626]"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {!isReadOnlyView && (
+                      <button
+                        type="button"
+                        aria-label={`Remove "${ev.title}"`}
+                        onClick={() => deleteCalendarEvent(ev.id)}
+                        className="p-1.5 text-[#556075] hover:text-[#DC2626]"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
 

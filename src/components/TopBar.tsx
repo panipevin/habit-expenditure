@@ -7,7 +7,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   dashboard: 'Overview',
   tasks: 'Daily Tasks',
   habits: 'Habit Streaks',
-  boards: 'Team Boards',
+  family: 'Family & Sharing',
   calendar: 'Calendar',
   expenses: 'Expenses',
   analytics: 'Analytics',
@@ -26,6 +26,9 @@ export const TopBar: React.FC = () => {
     markAllNotificationsRead,
     vaultLockEnabled,
     lockVault,
+    connectedAccounts,
+    viewingAccountId,
+    setViewingAccountId,
   } = useWorkspace();
 
   const [notifOpen, setNotifOpen] = useState(false);
@@ -39,7 +42,7 @@ export const TopBar: React.FC = () => {
   };
 
   return (
-    <header className="sticky top-0 z-30 h-13 lg:h-16 bg-white/95 dark:bg-[#121722]/95 backdrop-blur-md border-b border-[#E2E6ED] dark:border-[#1F2737] px-4 lg:px-8 flex items-center justify-between gap-4 lg:gap-8">
+    <header className="sticky top-0 z-30 h-13 lg:h-16 bg-white/95 dark:bg-[#121722]/95 backdrop-blur-md border-b border-[#E2E6ED] dark:border-[#1F2737] px-4 lg:px-8 flex items-center justify-between gap-3 lg:gap-6">
       {/* Zone 1: Brand on Mobile / Section Breadcrumb on Desktop */}
       <div className="flex items-center gap-2 min-w-0 shrink-0">
         <span className="lg:hidden flex items-center justify-center w-6 h-6 rounded-md bg-[#0E1525] dark:bg-[#1D4ED8] text-white font-display font-bold text-xs shrink-0">
@@ -81,8 +84,26 @@ export const TopBar: React.FC = () => {
         </div>
       </div>
 
-      {/* Zone 3: Theme, Notifications, & Lock Action */}
+      {/* Zone 3: Quick Account Switcher, Theme, Notifications, & Lock Action */}
       <div className="flex items-center gap-1.5 shrink-0 relative">
+        {connectedAccounts.length > 0 && (
+          <select
+            aria-label="Switch viewed account"
+            value={viewingAccountId || '__self__'}
+            onChange={(e) =>
+              setViewingAccountId(e.target.value === '__self__' ? null : e.target.value)
+            }
+            className="h-9 max-w-[140px] sm:max-w-[190px] rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9]"
+          >
+            <option value="__self__">My Account</option>
+            {connectedAccounts.map((acc) => (
+              <option key={acc.ownerId} value={acc.ownerId}>
+                {acc.displayName} (View Only)
+              </option>
+            ))}
+          </select>
+        )}
+
         <button
           type="button"
           onClick={toggleTheme}

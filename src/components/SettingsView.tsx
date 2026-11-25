@@ -52,6 +52,8 @@ export const SettingsView: React.FC = () => {
     updateNotificationPrefs,
     pushAlert,
     clearWorkspaceData,
+    isReadOnlyView,
+    viewingAccountName,
   } = useWorkspace();
 
   const [bioCap, setBioCap] = useState<BiometricCapability | null>(null);
@@ -119,6 +121,12 @@ export const SettingsView: React.FC = () => {
           Security &amp; Sync
         </h1>
       </div>
+
+      {isReadOnlyView && viewingAccountName && (
+        <div className="rounded-xl border border-[#1D4ED8]/30 bg-[#1D4ED8]/5 dark:bg-[#3B82F6]/10 px-4 py-3 text-xs text-[#0E1525] dark:text-[#F1F5F9]">
+          Security, Google Sign-In, and Sync controls below apply strictly to <strong>your own account</strong>. You can never view or edit {viewingAccountName}&apos;s email, PIN, or security settings.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Biometric Authentication & Privacy Vault */}
@@ -270,7 +278,7 @@ export const SettingsView: React.FC = () => {
             ) : (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <p className="text-xs text-[#556075] dark:text-[#94A3B8]">
-                  Connect your Google account to sync tasks, habits, and boards across desktop, iOS, and Android.
+                  Connect your Google account to sync tasks, habits, expenses, and read-only family sharing across desktop, iOS, and Android.
                 </p>
                 <button
                   type="button"
@@ -322,7 +330,7 @@ export const SettingsView: React.FC = () => {
 
             <div className="pt-3 border-t border-[#E2E6ED] dark:border-[#1F2737] flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-[#556075] dark:text-[#8B97AD]">
-                Clear local cached tasks, habits, boards, and expenses
+                Clear local cached tasks, habits, calendar events, and expenses
               </span>
               {confirmReset ? (
                 <div className="flex items-center gap-2">
@@ -428,7 +436,7 @@ export const SettingsView: React.FC = () => {
                 { key: 'urgentDeadlines', label: 'Urgent deadline push reminders' },
                 { key: 'eveningCutoffReminder', label: 'Pre-night daily task assignment alert' },
                 { key: 'streakRiskAlerts', label: 'Habit streak risk & milestone notifications' },
-                { key: 'teamMentions', label: 'Team board status & discussion alerts' },
+                { key: 'teamMentions', label: 'Family sharing & account connection alerts' },
                 { key: 'budgetThresholdAlerts', label: 'Monthly budget threshold warnings' },
               ] as const
             ).map((pref) => (

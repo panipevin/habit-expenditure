@@ -4,10 +4,10 @@ import {
   CalendarDays,
   CheckSquare,
   Flame,
-  KanbanSquare,
   LayoutGrid,
   Menu,
   Settings,
+  Users,
   Wallet,
   X,
 } from 'lucide-react';
@@ -18,7 +18,7 @@ const PRIMARY_TABS: { id: AppSection; label: string; icon: React.ComponentType<{
   { id: 'dashboard', label: 'Home', icon: LayoutGrid },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare },
   { id: 'habits', label: 'Streaks', icon: Flame },
-  { id: 'boards', label: 'Boards', icon: KanbanSquare },
+  { id: 'family', label: 'Family', icon: Users },
 ];
 
 const MORE_DESTINATIONS: { id: AppSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [

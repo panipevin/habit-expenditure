@@ -236,3 +236,53 @@ test('pending task search and evening cutoff evaluation work accurately', () => 
   assert.equal(cutoff.isCutoffApproaching, true);
   assert.equal(cutoff.minutesUntilCutoff, 90);
 });
+
+test('family share codes, read-only viewer lists, and legacy widget migration work accurately', async () => {
+  const {
+    addViewerToAccessList,
+    buildConnectedViewersList,
+    generateShareInviteCode,
+    isValidShareInviteCode,
+    migrateLegacyWidgets,
+    normalizeShareInviteCode,
+    removeViewerFromAccessList,
+  } = await import('./sharing');
+  const { DEFAULT_WIDGETS } = await import('../data/seed');
+
+  const code = generateShareInviteCode(6);
+  assert.equal(code.length, 6);
+  assert.equal(isValidShareInviteCode(code), true);
+  assert.equal(normalizeShareInviteCode(' ab-12 cd '), 'AB12CD');
+  assert.equal(isValidShareInviteCode('ABC'), false);
+
+  // Cannot add owner as their own viewer
+  const selfAttempt = addViewerToAccessList([], {}, 'owner-1', 'Me', 'owner-1');
+  assert.equal(selfAttempt.changed, false);
+  assert.deepEqual(selfAttempt.viewerIds, []);
+
+  // Adding sister succeeds and deduplicates cleanly
+  const added = addViewerToAccessList([], {}, 'sister-1', 'Priya', 'owner-1');
+  assert.equal(added.changed, true);
+  assert.deepEqual(added.viewerIds, ['sister-1']);
+  assert.deepEqual(buildConnectedViewersList(added.viewerIds, added.viewerNames), [
+    { uid: 'sister-1', name: 'Priya' },
+  ]);
+
+  const dup = addViewerToAccessList(added.viewerIds, added.viewerNames, 'sister-1', 'Priya', 'owner-1');
+  assert.equal(dup.changed, false);
+
+  const removed = removeViewerFromAccessList(added.viewerIds, added.viewerNames, 'sister-1');
+  assert.deepEqual(removed.viewerIds, []);
+  assert.deepEqual(removed.viewerNames, {});
+
+  // Legacy 'boards' widget migrates cleanly to 'family'
+  const migrated = migrateLegacyWidgets(
+    [{ id: 'boards', title: 'Shared Team Boards Pulse', visible: true, size: 'wide' }],
+    DEFAULT_WIDGETS
+  );
+  assert.equal(migrated.some((w) => (w.id as string) === 'boards'), false);
+  const familyWidget = migrated.find((w) => w.id === 'family');
+  assert.ok(familyWidget);
+  assert.equal(familyWidget.title, 'Connected Family Accounts');
+});
+

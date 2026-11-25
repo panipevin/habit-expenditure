@@ -26,6 +26,8 @@ export const TasksView: React.FC = () => {
     globalSearch,
     setGlobalSearch,
     notificationPrefs,
+    isReadOnlyView,
+    viewingAccountName,
   } = useWorkspace();
 
   const [statusFilter, setStatusFilter] = useState<'pending' | 'all' | 'in_progress' | 'done'>('pending');
@@ -86,18 +88,20 @@ export const TasksView: React.FC = () => {
             Daily schedule · Evening assignment cutoff {formatHourLabel(notificationPrefs.eveningCutoffHour)}
           </p>
           <h1 className="mt-1 font-display text-2xl lg:text-3xl font-semibold tracking-tight text-[#0E1525] dark:text-[#F1F5F9]">
-            Daily Tasks
+            {isReadOnlyView && viewingAccountName ? `${viewingAccountName}'s Daily Tasks` : 'Daily Tasks'}
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setComposerOpen((prev) => !prev)}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] transition-colors whitespace-nowrap shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          {composerOpen ? 'Close Composer' : 'New Daily Task'}
-        </button>
+        {!isReadOnlyView && (
+          <button
+            type="button"
+            onClick={() => setComposerOpen((prev) => !prev)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1D4ED8] dark:bg-[#3B82F6] px-4 py-2.5 text-xs font-medium text-white hover:bg-[#1E40AF] dark:hover:bg-[#2563EB] transition-colors whitespace-nowrap shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            {composerOpen ? 'Close Composer' : 'New Daily Task'}
+          </button>
+        )}
       </div>
 
       {/* Evening Cutoff Planning Strip */}
@@ -116,20 +120,22 @@ export const TasksView: React.FC = () => {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setDueDate(addDaysISO(todayISO, 1));
-            setComposerOpen(true);
-          }}
-          className="rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3.5 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] transition-colors whitespace-nowrap shrink-0"
-        >
-          Plan Tomorrow
-        </button>
+        {!isReadOnlyView && (
+          <button
+            type="button"
+            onClick={() => {
+              setDueDate(addDaysISO(todayISO, 1));
+              setComposerOpen(true);
+            }}
+            className="rounded-lg border border-[#E2E6ED] dark:border-[#1F2737] px-3.5 py-2 text-xs font-medium text-[#0E1525] dark:text-[#F1F5F9] hover:bg-[#F6F7F9] dark:hover:bg-[#1A2130] transition-colors whitespace-nowrap shrink-0"
+          >
+            Plan Tomorrow
+          </button>
+        )}
       </section>
 
       {/* Task Composer */}
-      {composerOpen && (
+      {composerOpen && !isReadOnlyView && (
         <form
           onSubmit={handleSubmit}
           className="rounded-xl bg-white dark:bg-[#121722] border border-[#1D4ED8]/40 dark:border-[#3B82F6]/40 p-6 space-y-4"
@@ -341,18 +347,28 @@ export const TasksView: React.FC = () => {
                 className="p-4 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F6F7F9]/60 dark:hover:bg-[#1A2130]/40 transition-colors"
               >
                 <div className="flex items-start gap-3.5 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => toggleTaskStatus(task.id)}
-                    aria-label={isDone ? `Reopen "${task.title}"` : `Complete "${task.title}"`}
-                    className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
-                  >
-                    {isDone ? (
-                      <CheckCircle2 className="w-5 h-5 text-[#16A34A]" />
-                    ) : (
-                      <Circle className="w-5 h-5" />
-                    )}
-                  </button>
+                  {isReadOnlyView ? (
+                    <span className="mt-0.5 text-[#556075] dark:text-[#8B97AD] shrink-0">
+                      {isDone ? (
+                        <CheckCircle2 className="w-5 h-5 text-[#16A34A]" />
+                      ) : (
+                        <Circle className="w-5 h-5" />
+                      )}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => toggleTaskStatus(task.id)}
+                      aria-label={isDone ? `Reopen "${task.title}"` : `Complete "${task.title}"`}
+                      className="mt-0.5 text-[#556075] hover:text-[#1D4ED8] dark:text-[#8B97AD] dark:hover:text-[#60A5FA] shrink-0"
+                    >
+                      {isDone ? (
+                        <CheckCircle2 className="w-5 h-5 text-[#16A34A]" />
+                      ) : (
+                        <Circle className="w-5 h-5" />
+                      )}
+                    </button>
+                  )}
 
                   <div className="min-w-0">
                     <p
@@ -407,24 +423,36 @@ export const TasksView: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                  <select
-                    aria-label={`Change status for "${task.title}"`}
-                    value={task.status}
-                    onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                    className="h-8 rounded-md border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2 text-xs text-[#0E1525] dark:text-[#F1F5F9]"
-                  >
-                    <option value="todo">To Do</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="done">Done</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => deleteTask(task.id)}
-                    aria-label={`Delete task "${task.title}"`}
-                    className="p-2 rounded-md text-[#556075] hover:text-[#DC2626] hover:bg-[#FEE2E2]/50 dark:hover:bg-[#7F1D1D]/30 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {isReadOnlyView ? (
+                    <span className="rounded-md border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2.5 py-1 text-xs font-medium text-[#556075] dark:text-[#94A3B8]">
+                      {task.status === 'done'
+                        ? 'Done'
+                        : task.status === 'in_progress'
+                        ? 'In Progress'
+                        : 'To Do'}
+                    </span>
+                  ) : (
+                    <>
+                      <select
+                        aria-label={`Change status for "${task.title}"`}
+                        value={task.status}
+                        onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                        className="h-8 rounded-md border border-[#E2E6ED] dark:border-[#1F2737] bg-[#F6F7F9] dark:bg-[#0A0D14] px-2 text-xs text-[#0E1525] dark:text-[#F1F5F9]"
+                      >
+                        <option value="todo">To Do</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="done">Done</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => deleteTask(task.id)}
+                        aria-label={`Delete task "${task.title}"`}
+                        className="p-2 rounded-md text-[#556075] hover:text-[#DC2626] hover:bg-[#FEE2E2]/50 dark:hover:bg-[#7F1D1D]/30 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             );
